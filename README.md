@@ -2,7 +2,7 @@
 
 # Universal HEIC & HEVC Converter
 
-![GitHub release (latest by date)](https://img.shields.io/github/v/release/mateus-mg/media_converter?label=version&style=flat-square)
+![GitHub release (latest by date)](https://img.shields.io/github/v/release/mateus-mg/media-converter?label=version&style=flat-square)
 
 Converts HEIC/HEIF images to JPEG 95% (or PNG) and H.265/HEVC videos to H.264 (maximum compatibility). Compatible with files from iOS, GoPro, and other devices.
 
