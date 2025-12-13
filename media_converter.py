@@ -1023,7 +1023,7 @@ Video resizing:
     print(
         f"{Color.GREEN}Images converted:{Color.NC} {stats['images_converted']}")
     print(
-        f"{Color.GREEN}Videos converted:{Color.NC} {stats['videos_converted']}" )
+        f"{Color.GREEN}Videos converted:{Color.NC} {stats['videos_converted']}")
 
     if aae_stats:
         print(
