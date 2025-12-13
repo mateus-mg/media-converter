@@ -1,0 +1,16 @@
+#!/bin/bash
+#!/bin/bash
+# Wrapper script para ativar venv e executar media_converter.py
+
+# Diretório do script
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# Ativar ambiente virtual
+source "$SCRIPT_DIR/venv/bin/activate"
+
+
+# Executar script Python passando todos os argumentos
+python3 "$SCRIPT_DIR/media_converter.py" "$@"
+
+# Desativar ambiente virtual ao finalizar
+deactivate

@@ -1,0 +1,9 @@
+# Dependências opcionais para máxima qualidade de conversão de imagens
+# Instale com: pip install -r requirements-converter.txt
+
+# Para conversão de imagens HEIC/HEIF com qualidade superior
+Pillow>=10.0.0
+pillow-heif>=0.13.0
+
+# Nota: ffmpeg e imagemagick devem ser instalados no sistema:
+# sudo apt update && sudo apt install ffmpeg imagemagick
