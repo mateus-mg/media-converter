@@ -436,7 +436,13 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'high', 
     """
     output_path = input_path.with_suffix('.mp4')
 
-    if output_path.exists() and output_path != input_path:
+    # CRITICAL: Prevent in-place conversion (ffmpeg doesn't allow it)
+    # If input is already .mp4, we need a different output name
+    if output_path == input_path:
+        # Generate alternative name with _converted suffix
+        output_path = input_path.with_stem(f"{input_path.stem}_converted")
+
+    if output_path.exists():
         log_message('WARN', f"File already exists: {output_path.name}")
         return False, output_path
 
