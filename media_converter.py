@@ -132,7 +132,7 @@ def check_hardware_acceleration() -> str:
 
 def count_files(directory: Path, filters: Optional[List[str]] = None, only_images: bool = False, only_videos: bool = False, only_hevc_videos: bool = False) -> Dict[str, int]:
     """Count files by extension that will actually be converted (excludes already converted files)"""
-    counts = {'heic': 0, 'heif': 0, 'mov': 0, 'mp4': 0,
+    counts = {'heic': 0, 'heif': 0, 'hevc': 0,
               'aae': 0, 'jpg': 0, 'jpeg': 0, 'png': 0}
 
     # Count image files to convert
@@ -144,53 +144,44 @@ def count_files(directory: Path, filters: Optional[List[str]] = None, only_image
             image_files = list(directory.rglob(
                 f"*.{ext}")) + list(directory.rglob(f"*.{ext.upper()}"))
             for img_file in image_files:
-                # Check if already converted
-                possible_conversions = [
-                    img_file.with_suffix('.jpg'),
-                    img_file.with_suffix('.png'),
-                    img_file.with_suffix('.jpeg')
-                ]
-                already_converted = False
-                for conv_file in possible_conversions:
-                    if conv_file.exists() and conv_file.stat().st_size > 0:
-                        already_converted = True
-                        break
+                # Check if already converted (case-insensitive search)
+                if find_converted_file(img_file, ['.jpg', '.png', '.jpeg']):
+                    continue
+                counts[ext] += 1
 
-                if not already_converted:
-                    counts[ext] += 1
-
-    # Count video files to convert
+    # Count video files to convert (by codec, not extension)
     if not only_images:
         video_exts = ['mov', 'mp4']
+        all_video_files = []
         for ext in video_exts:
-            if filters and ext not in filters:
+            all_video_files.extend(list(directory.rglob(
+                f"*.{ext}")) + list(directory.rglob(f"*.{ext.upper()}")))
+
+        hevc_count = 0
+        for vid_file in all_video_files:
+            # Skip files with _converted in name
+            if '_converted' in vid_file.stem:
                 continue
 
-            video_files = list(directory.rglob(
-                f"*.{ext}")) + list(directory.rglob(f"*.{ext.upper()}"))
-            for vid_file in video_files:
-                # Skip files with _converted in name
-                if '_converted' in vid_file.stem:
-                    continue
+            # Check if already converted (case-insensitive search)
+            if find_converted_file(vid_file, ['.mp4']):
+                continue
 
-                # Check if already converted
-                output_path = vid_file.with_suffix('.mp4')
-                if output_path.exists() and output_path != vid_file:
-                    continue
+            # IMPORTANT: Check codec - only count H.265/HEVC videos for conversion
+            info = get_video_info(vid_file)
+            codec_name = None
+            if info and 'streams' in info:
+                for stream in info['streams']:
+                    if stream.get('codec_type') == 'video':
+                        codec_name = stream.get('codec_name')
+                        break
 
-                # If only_hevc_videos, check codec
-                if only_hevc_videos:
-                    info = get_video_info(vid_file)
-                    codec_name = None
-                    if info and 'streams' in info:
-                        for stream in info['streams']:
-                            if stream.get('codec_type') == 'video':
-                                codec_name = stream.get('codec_name')
-                                break
-                    if codec_name != 'hevc':
-                        continue
+            # Only count H.265/HEVC videos (these need conversion to H.264)
+            if codec_name == 'hevc':
+                hevc_count += 1
 
-                counts[ext] += 1
+        # Store HEVC count in a dedicated counter (not duplicating in mov/mp4)
+        counts['hevc'] = hevc_count
 
     # Count other file types (AAE, JPG, PNG) - always count all
     for ext in ['aae', 'jpg', 'jpeg', 'png']:
@@ -200,6 +191,41 @@ def count_files(directory: Path, filters: Optional[List[str]] = None, only_image
             f"*.{ext}"))) + len(list(directory.rglob(f"*.{ext.upper()}")))
 
     return counts
+
+
+def find_converted_file(original_file: Path, target_extensions: List[str]) -> Optional[Path]:
+    """
+    Find a converted file with case-insensitive search.
+    Handles both uppercase and lowercase extensions.
+    Returns the Path if found, None otherwise.
+    """
+    for ext in target_extensions:
+        # Try exact case
+        candidate = original_file.with_suffix(ext)
+        if candidate.exists() and candidate != original_file and candidate.stat().st_size > 0:
+            return candidate
+
+        # Try case variations (for case-sensitive filesystems like Linux)
+        parent = original_file.parent
+        stem = original_file.stem
+
+        # Check both lower and upper case variations of extension
+        for ext_case in [ext.lower(), ext.upper()]:
+            candidate_name = f"{stem}{ext_case}"
+            candidate_path = parent / candidate_name
+            if candidate_path.exists() and candidate_path != original_file and candidate_path.stat().st_size > 0:
+                return candidate_path
+
+    return None
+
+
+def is_16_9_aspect(width: int, height: int) -> bool:
+    """Check if video has 16:9 aspect ratio"""
+    if height == 0:
+        return False
+    aspect_ratio = width / height
+    # 16:9 = 1.777... (tolerance of 0.01)
+    return abs(aspect_ratio - (16/9)) < 0.01
 
 
 def preserve_metadata(source: Path, destination: Path) -> None:
@@ -446,20 +472,74 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'high', 
     # Determine output resolution
     scale_filter = []
     if resize != 'none' and resize != '4k':
-        target_height = 1440 if resize in ['2k', '1440p'] else 1080
+        # Check if video is 16:9
+        is_16_9 = is_16_9_aspect(width, height)
+
+        if resize in ['2k', '1440p']:
+            target_width = 2560
+            target_height = 1440
+        else:  # 1080p
+            target_width = 1920
+            target_height = 1080
 
         # Only resize if the video is LARGER than the target
         if height > target_height:
-            scale_filter = [
-                '-vf', f'scale=-2:{target_height}:flags=lanczos,scale=trunc(iw/2)*2:trunc(ih/2)*2']
-            log_message(
-                'INFO', f"  Resizing: {width}x{height} → target height {target_height}px")
+            if is_16_9:
+                # Force exact resolution for 16:9 videos
+                scale_filter = [
+                    '-vf', f'scale={target_width}:{target_height}:flags=lanczos']
+                log_message(
+                    'INFO', f"  Resizing: {width}x{height} → {target_width}x{target_height} (16:9)")
+            else:
+                # Keep aspect ratio for non-16:9 videos
+                scale_filter = [
+                    '-vf', f'scale=-2:{target_height}:flags=lanczos,scale=trunc(iw/2)*2:trunc(ih/2)*2']
+                log_message(
+                    'INFO', f"  Resizing: {width}x{height} → height {target_height}px (keeping aspect ratio)")
         else:
             log_message(
                 'INFO', f"  Keeping original resolution: {width}x{height} (already ≤ {target_height}px)")
 
     # Detect hardware acceleration
     hw_accel = check_hardware_acceleration()
+
+    # Determine optimal preset based on hardware, resolution, and content
+    def get_optimal_preset(hw_type: str, resolution_height: int, is_16_9: bool, codec_name: str) -> str:
+        """
+        Determine optimal preset based on:
+        - Hardware: QSV/NVENC use fixed presets
+        - Resolution: Higher = faster preset (quality already controlled by CRF)
+        - Aspect: 16:9 = faster (more optimized by encoders)
+        - Codec: h265 benefits from slower presets
+        """
+        # Hardware-specific presets
+        if hw_type == 'nvenc':
+            return 'p4'  # NVENC preset (p1-p7, p4 is balanced)
+
+        if hw_type == 'qsv':
+            return 'medium'  # QSV preset
+
+        # Software encoding (libx264/libx265)
+        if codec_name == 'h265':
+            # H.265 benefits from slower presets for better compression
+            if resolution_height >= 2160:  # 4K
+                return 'medium'  # Faster for 4K (too slow otherwise)
+            elif resolution_height >= 1440:  # 2K
+                return 'slow'
+            else:  # 1080p or less
+                return 'slower'
+        else:
+            # H.264 preset selection
+            if resolution_height >= 2160:  # 4K
+                return 'fast' if is_16_9 else 'medium'
+            elif resolution_height >= 1440:  # 2K
+                return 'medium' if is_16_9 else 'slow'
+            else:  # 1080p or less
+                return 'slow' if is_16_9 else 'slower'
+
+    # Check aspect ratio
+    is_16_9 = is_16_9_aspect(width, height)
+    optimal_preset = get_optimal_preset(hw_accel, height, is_16_9, codec)
 
     # Adjust quality automatically based on resolution
     auto_crf = None
@@ -483,41 +563,48 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'high', 
     if codec == 'h264':
         if hw_accel == 'qsv':
             log_message(
-                'INFO', "  Using Intel Quick Sync Video (hardware acceleration)")
+                'INFO', f"  Using Intel Quick Sync Video (hardware acceleration, preset: {optimal_preset})")
             video_codec = [
                 '-c:v', 'h264_qsv',
                 '-global_quality', auto_crf,
-                '-preset', 'medium',
+                '-preset', optimal_preset,
                 '-profile:v', 'high'
             ]
         elif hw_accel == 'nvenc':
-            log_message('INFO', "  Using NVIDIA NVENC (hardware acceleration)")
+            log_message(
+                'INFO', f"  Using NVIDIA NVENC (hardware acceleration, preset: {optimal_preset})")
             video_codec = [
                 '-c:v', 'h264_nvenc',
                 '-cq', auto_crf,
-                '-preset', 'p4',
+                '-preset', optimal_preset,
                 '-profile:v', 'high'
             ]
         elif quality == 'lossless':
+            log_message('INFO', f"  Using software encoder (preset: medium)")
             video_codec = ['-c:v', 'libx264', '-qp', '0', '-preset', 'medium']
         else:
+            log_message(
+                'INFO', f"  Using software encoder (preset: {optimal_preset})")
             video_codec = [
                 '-c:v', 'libx264',
                 '-crf', auto_crf,
-                '-preset', 'medium',
+                '-preset', optimal_preset,
                 '-profile:v', 'high',
                 '-level', '4.1'
             ]
     elif codec == 'h265':
         if quality == 'lossless':
+            log_message('INFO', f"  Using H.265 lossless (preset: slower)")
             video_codec = ['-c:v', 'libx265', '-x265-params',
                            'lossless=1', '-preset', 'slower']
         else:
             crf = '18' if quality == 'high' else '23'
+            log_message(
+                'INFO', f"  Using H.265 encoder (preset: {optimal_preset})")
             video_codec = [
                 '-c:v', 'libx265',
                 '-crf', crf,
-                '-preset', 'slower',
+                '-preset', optimal_preset,
                 '-x265-params', 'log-level=error'
             ]
     else:
@@ -631,20 +718,14 @@ def process_directory(
         image_files.extend(directory.rglob(ext))
 
     for img_file in sorted(image_files):
-        # Check if converted file already exists
-        converted_files = [
-            img_file.with_suffix(ext) for ext in ['.jpg', '.png', '.jpeg']
-        ]
-        matching_file = None
-        for converted_file in converted_files:
-            if converted_file.exists() and converted_file.stat().st_size > 0:
-                matching_file = converted_file
-                break
+        # Check if converted file already exists (case-insensitive search)
+        converted_file = find_converted_file(
+            img_file, ['.jpg', '.png', '.jpeg'])
 
-        if matching_file:
+        if converted_file:
             log_message(
                 'INFO',
-                f"Skipping {img_file.name}: already converted to {matching_file.name}"
+                f"Skipping {img_file.name}: already converted to {converted_file.name}"
             )
             already_converted_originals.append(img_file)
             stats['images_skipped'] += 1
@@ -661,8 +742,6 @@ def process_directory(
             if success:
                 stats['images_converted'] += 1
                 converted_originals.append(img_file)
-            elif output_path.exists():
-                stats['images_skipped'] += 1
             else:
                 stats['images_failed'] += 1
 
@@ -679,47 +758,47 @@ def process_directory(
             if '_converted' in vid_file.stem:
                 continue
 
-            # Check if output already exists
-            output_path = vid_file.with_suffix('.mp4')
-            if output_path.exists() and output_path != vid_file:
+            # Check if output already exists (case-insensitive search for .mp4)
+            converted_video = find_converted_file(vid_file, ['.mp4'])
+
+            if converted_video:
                 log_message(
                     'INFO',
-                    f"Skipping {vid_file.name}: already converted to {output_path.name}"
+                    f"Skipping {vid_file.name}: already converted to {converted_video.name}"
                 )
                 already_converted_originals.append(vid_file)
                 stats['videos_skipped'] += 1
                 continue
 
-            # Detect codec if needed
-            if only_hevc_videos:
-                info = get_video_info(vid_file)
-                codec_name = None
-                if info and 'streams' in info:
-                    for stream in info['streams']:
-                        if stream.get('codec_type') == 'video':
-                            codec_name = stream.get('codec_name')
-                            break
-                if codec_name != 'hevc':
-                    log_message(
-                        'INFO',
-                        f"Skipping {vid_file.name}: codec {codec_name or 'unknown'} (not HEVC/H.265)"
-                    )
-                    stats['videos_skipped'] += 1
-                    continue
+            # PRIMARY CRITERION: Check codec - only process H.265/HEVC videos
+            info = get_video_info(vid_file)
+            codec_name = None
+            if info and 'streams' in info:
+                for stream in info['streams']:
+                    if stream.get('codec_type') == 'video':
+                        codec_name = stream.get('codec_name')
+                        break
+
+            # Skip if NOT H.265/HEVC (already H.264 or other codec)
+            if codec_name != 'hevc':
+                log_message(
+                    'INFO',
+                    f"Skipping {vid_file.name}: codec {codec_name or 'unknown'} (not HEVC/H.265, no conversion needed)"
+                )
+                stats['videos_skipped'] += 1
+                continue
 
             if dry_run:
                 log_message(
                     'INFO', f"[DRY RUN] Would convert: {vid_file.name}")
                 stats['videos_converted'] += 1
             else:
-                success, _ = convert_video(
+                success, output_path = convert_video(
                     vid_file, codec=video_codec, quality=video_quality, resize=resize
                 )
                 if success:
                     stats['videos_converted'] += 1
                     converted_originals.append(vid_file)
-                elif _.exists():
-                    stats['videos_skipped'] += 1
                 else:
                     stats['videos_failed'] += 1
 
@@ -962,9 +1041,9 @@ Video resizing:
     if args.only_images:
         shown_types = ['heic', 'heif']
     elif args.only_videos:
-        shown_types = ['mov', 'mp4']
+        shown_types = ['hevc']
     else:
-        shown_types = ['heic', 'heif', 'mov', 'mp4']
+        shown_types = ['heic', 'heif', 'hevc']
 
     log_message(
         'INFO', f"Searching for HEIC/HEIF files and H.265/HEVC videos in: {start_dir}")
@@ -972,7 +1051,7 @@ Video resizing:
     total_files = sum(file_counts.values())
 
     if total_files == 0:
-        log_message('WARN', "No HEIC, HEIF, MOV or MP4 files found.")
+        log_message('WARN', "No HEIC, HEIF or H.265/HEVC videos found.")
         return 0
 
     print(f"\n{Color.CYAN}=== SUPPORTED FILES FOUND ==={Color.NC}")
@@ -980,9 +1059,15 @@ Video resizing:
     for ext in shown_types:
         count = file_counts.get(ext, 0)
         if count > 0:
-            print(f"  {ext.upper()}: {count} file(s)")
+            if ext == 'hevc':
+                display_name = 'H.265/HEVC videos'
+            elif ext in ['heic', 'heif']:
+                display_name = f'{ext.upper()} images'
+            else:
+                display_name = ext.upper()
+            print(f"  {display_name}: {count} file(s)")
             filtered_total += count
-    print(f"  {Color.MAGENTA}TOTAL: {filtered_total} file(s){Color.NC}\n")
+    print(f"  {Color.MAGENTA}TOTAL: {filtered_total} file(s) to convert{Color.NC}\n")
 
     # Show settings
     print(f"{Color.CYAN}=== SETTINGS ==={Color.NC}")

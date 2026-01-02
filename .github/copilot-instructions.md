@@ -22,16 +22,31 @@ text
 
 ### 3. Video Encoding Pipeline
 
-MOV/MP4 → detect resolution → choose CRF → select encoder → encode
+```
+MOV/MP4 → detect resolution & aspect → choose CRF & preset → select encoder → encode
 ↓
 Hardware detection: QSV > NVENC > VAAPI > libx264
-text
-
+```
 
 **CRF logic:**
 - 4K (≥2160p): CRF 23
 - 2K (≥1440p): CRF 20  
 - 1080p or less: CRF 18
+
+**Preset logic (automatic):**
+- Hardware encoders: Fixed presets (QSV=medium, NVENC=p4)
+- Software H.264:
+  - 4K: fast (16:9) or medium (other)
+  - 2K: medium (16:9) or slow (other)
+  - 1080p: slow (16:9) or slower (other)
+- Software H.265:
+  - 4K: medium
+  - 2K: slow
+  - 1080p: slower
+
+**Resize logic:**
+- 16:9 videos: Force exact resolution (2560x1440 for 2K, 1920x1080 for 1080p)
+- Non-16:9 videos: Resize by height, keep aspect ratio
 
 ### 4. File Safety Rules
 - Never overwrite existing converted files
@@ -49,19 +64,17 @@ main()  # Entry point
 ├── count_files()  # Count ONLY files to be converted (excludes already converted)
 ├── process_directory()  # Process all files
 │   ├── convert_image()  # Images
-│   └── convert_video()  # Videos
+│   └── convert_video()  # Videos (includes get_optimal_preset())
 └── install_command()  # Global installer
 
 Key Functions Location
 
+    is_16_9_aspect(): Lines 201-210 (detects 16:9 aspect ratio)
     convert_image(): Lines 230-260
-
-    convert_video(): Lines 320-460
-
+    convert_video(): Lines 420-480 (includes get_optimal_preset() function)
     process_directory(): Lines 550-690
-
     count_files(): Lines 135-200 (smart counter - excludes already converted)
-
+    find_converted_file(): Lines 204-230 (case-insensitive file detection for all filesystems)
     Hardware detection: Lines 110-140
 
     Deletion logic: Lines 1040-1100 (handles both new and already converted files)
@@ -245,8 +258,14 @@ Critical Fixes Summary
 
     Python package check: Added warning system for missing Pillow
 
-4. **Deletion safety**: Shows BOTH newly converted AND already converted files, user can choose to delete originals from both lists
+    Deletion safety: Shows BOTH newly converted AND already converted files, user can choose to delete originals from both lists
 
-5. **File counting**: Smart counter that only counts files to be converted, excludes already converted files
+    File counting: Smart counter that only counts files to be converted, excludes already converted files
 
-6. **Verification**: Before deleting any original, verifies converted file exists and has valid size
+    Verification: Before deleting any original, verifies converted file exists and has valid size
+    
+    Case-insensitive file detection: Added `find_converted_file()` function that searches for converted files with case-insensitive approach, handling both uppercase and lowercase extensions (fixes Linux case-sensitive filesystem issues)
+    
+    Counter logic fix: Fixed conversion result counting - removed faulty `elif output_path.exists()` logic that was incorrectly categorizing conversion results. Now only counts as failed if conversion truly failed.
+    
+    Skip target format files: Added logic to skip MP4 files that don't have MOV originals (prevents attempting to convert MP4→MP4 in-place)
