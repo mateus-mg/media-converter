@@ -5,6 +5,7 @@ Converts HEIC/HEIF images to JPEG 95% (or PNG) and H.265/HEVC videos to H.264 (m
 Compatible with files from smartphones, GoPro, and other devices.
 """
 
+from typing import Optional
 import os
 import sys
 import subprocess
@@ -13,6 +14,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 from datetime import datetime
 import argparse
+import logging
 
 
 class Color:
@@ -26,43 +28,79 @@ class Color:
     NC = '\033[0m'  # No Color
 
 
-def print_info(msg: str) -> None:
-    print(f"{Color.BLUE}[INFO]{Color.NC} {msg}")
+def setup_logging(level=logging.INFO):
+    """Setup logging configuration"""
+    logging.basicConfig(level=level, format='[%(levelname)s] %(message)s')
 
 
-def print_warn(msg: str) -> None:
-    print(f"{Color.YELLOW}[WARN]{Color.NC} {msg}")
+def log_message(level: str, msg: str) -> None:
+    """Unified logging and terminal output"""
+    color_map = {
+        'INFO': Color.BLUE,
+        'WARN': Color.YELLOW,
+        'ERROR': Color.RED,
+        'SUCCESS': Color.GREEN
+    }
+    color = color_map.get(level.upper(), Color.NC)
+    print(f"{color}[{level.upper()}]{Color.NC} {msg}")
 
 
-def print_error(msg: str) -> None:
-    print(f"{Color.RED}[ERROR]{Color.NC} {msg}")
+def check_python_packages() -> bool:
+    """Check if optional Python packages are installed"""
+    missing_packages = []
 
+    try:
+        from PIL import Image
+    except ImportError:
+        missing_packages.append("pillow")
 
-def print_success(msg: str) -> None:
-    print(f"{Color.GREEN}[SUCCESS]{Color.NC} {msg}")
+    try:
+        import pillow_heif
+    except ImportError:
+        missing_packages.append("pillow-heif")
+
+    if missing_packages:
+        log_message(
+            'WARN', f"Optional Python packages missing: {', '.join(missing_packages)}")
+        log_message('INFO', "Install with: pip install pillow pillow-heif")
+        log_message(
+            'INFO', "Will use ImageMagick fallback for HEIC conversion.")
+        return False
+
+    log_message(
+        'SUCCESS', "Python packages (Pillow, pillow-heif) are installed.")
+    return True
 
 
 def check_dependencies() -> bool:
-    """Check if required dependencies are installed"""
-    # Check ffmpeg and ffprobe
+    """Check if required dependencies are installed (ffmpeg, ffprobe, ImageMagick)"""
+    missing_dependencies = []
+
     if not shutil.which('ffmpeg'):
-        print_error("Missing dependency: ffmpeg")
-        print("\nInstall with:")
-        print("  sudo apt update && sudo apt install ffmpeg imagemagick")
+        missing_dependencies.append("ffmpeg")
+    if not shutil.which('ffprobe'):
+        missing_dependencies.append("ffprobe (part of ffmpeg)")
+    if not shutil.which('magick') and not shutil.which('convert'):
+        missing_dependencies.append("ImageMagick")
+
+    if missing_dependencies:
+        log_message(
+            'ERROR', f"Missing dependencies: {', '.join(missing_dependencies)}")
+        log_message(
+            'INFO', "Install missing dependencies using your package manager.")
         return False
 
-    if not shutil.which('ffprobe'):
-        print_error("Missing dependency: ffprobe (part of ffmpeg)")
-        print("\nInstall with:")
-        print("  sudo apt update && sudo apt install ffmpeg imagemagick")
-        return False
+    log_message('SUCCESS', "All required dependencies are installed.")
+
+    # Check optional Python packages
+    check_python_packages()
+
+    return True
 
 
 def check_hardware_acceleration() -> str:
-    """
-    Detect hardware acceleration support
-    Returns: 'qsv' (Intel Quick Sync), 'nvenc' (NVIDIA), 'vaapi' (generic), or 'none'
-    """
+    """Detect hardware acceleration support"""
+    log_message('INFO', "Checking for hardware acceleration support...")
     try:
         result = subprocess.run(
             ['ffmpeg', '-hide_banner', '-encoders'],
@@ -72,80 +110,94 @@ def check_hardware_acceleration() -> str:
         )
         encoders = result.stdout
 
-        # Prioridade: QSV > NVENC > VAAPI
-        # Testar QSV (Intel Quick Sync)
         if 'h264_qsv' in encoders:
-            test = subprocess.run(
-                ['ffmpeg', '-hide_banner', '-f', 'lavfi', '-i', 'nullsrc=s=256x256:d=1',
-                 '-c:v', 'h264_qsv', '-f', 'null', '-'],
-                capture_output=True,
-                timeout=3
-            )
-            if test.returncode == 0:
-                return 'qsv'
-
-        # Testar NVENC (NVIDIA)
+            log_message('SUCCESS', "Intel Quick Sync (QSV) detected.")
+            return 'qsv'
         if 'h264_nvenc' in encoders:
-            test = subprocess.run(
-                ['ffmpeg', '-hide_banner', '-f', 'lavfi', '-i', 'nullsrc=s=256x256:d=1',
-                 '-c:v', 'h264_nvenc', '-f', 'null', '-'],
-                capture_output=True,
-                timeout=3
-            )
-            if test.returncode == 0:
-                return 'nvenc'
-
-        # Testar VAAPI (genérico Linux)
+            log_message('SUCCESS', "NVIDIA NVENC detected.")
+            return 'nvenc'
         if 'h264_vaapi' in encoders:
-            test = subprocess.run(
-                ['ffmpeg', '-hide_banner', '-f', 'lavfi', '-i', 'nullsrc=s=256x256:d=1',
-                 '-vaapi_device', '/dev/dri/renderD128',
-                 '-vf', 'format=nv12,hwupload', '-c:v', 'h264_vaapi', '-f', 'null', '-'],
-                capture_output=True,
-                timeout=3
-            )
-            if test.returncode == 0:
-                return 'vaapi'
+            log_message(
+                'SUCCESS', "VAAPI (generic hardware acceleration) detected.")
+            return 'vaapi'
+    except subprocess.TimeoutExpired:
+        log_message('WARN', "Hardware acceleration check timed out.")
+    except Exception as e:
+        log_message('ERROR', f"Error checking hardware acceleration: {e}")
 
-        return 'none'
-    except Exception:
-        return 'none'
+    log_message(
+        'INFO', "No hardware acceleration detected. Falling back to software encoding.")
+    return 'none'
 
 
-def check_dependencies() -> bool:
-    """Verifica se as dependências necessárias estão instaladas"""
-    # Verificar ffmpeg e ffprobe
-    if not shutil.which('ffmpeg'):
-        print_error("Dependência faltando: ffmpeg")
-        print("\nInstale com:")
-        print("  sudo apt update && sudo apt install ffmpeg imagemagick")
-        return False
+def count_files(directory: Path, filters: Optional[List[str]] = None, only_images: bool = False, only_videos: bool = False, only_hevc_videos: bool = False) -> Dict[str, int]:
+    """Count files by extension that will actually be converted (excludes already converted files)"""
+    counts = {'heic': 0, 'heif': 0, 'mov': 0, 'mp4': 0,
+              'aae': 0, 'jpg': 0, 'jpeg': 0, 'png': 0}
 
-    if not shutil.which('ffprobe'):
-        print_error("Dependência faltando: ffprobe (parte do ffmpeg)")
-        print("\nInstale com:")
-        print("  sudo apt update && sudo apt install ffmpeg")
-        return False
+    # Count image files to convert
+    if not only_videos:
+        for ext in ['heic', 'heif']:
+            if filters and ext not in filters:
+                continue
 
-    # Verificar ImageMagick (magick para v7+ ou convert para v6)
-    if not shutil.which('magick') and not shutil.which('convert'):
-        print_error("Dependência faltando: imagemagick")
-        print("\nInstale com:")
-        print("  sudo apt update && sudo apt install imagemagick")
-        print("\nOu via pip para bibliotecas Python (opcional para melhor qualidade):")
-        print("  pip install pillow pillow-heif")
-        return False
+            image_files = list(directory.rglob(
+                f"*.{ext}")) + list(directory.rglob(f"*.{ext.upper()}"))
+            for img_file in image_files:
+                # Check if already converted
+                possible_conversions = [
+                    img_file.with_suffix('.jpg'),
+                    img_file.with_suffix('.png'),
+                    img_file.with_suffix('.jpeg')
+                ]
+                already_converted = False
+                for conv_file in possible_conversions:
+                    if conv_file.exists() and conv_file.stat().st_size > 0:
+                        already_converted = True
+                        break
 
-    return True
+                if not already_converted:
+                    counts[ext] += 1
 
+    # Count video files to convert
+    if not only_images:
+        video_exts = ['mov', 'mp4']
+        for ext in video_exts:
+            if filters and ext not in filters:
+                continue
 
-def count_files(directory: Path) -> Dict[str, int]:
-    """Count files by extension"""
-    counts = {'heic': 0, 'heif': 0, 'mov': 0, 'mp4': 0, 'aae': 0}
+            video_files = list(directory.rglob(
+                f"*.{ext}")) + list(directory.rglob(f"*.{ext.upper()}"))
+            for vid_file in video_files:
+                # Skip files with _converted in name
+                if '_converted' in vid_file.stem:
+                    continue
 
-    for ext in counts.keys():
-        counts[ext] = len(list(directory.rglob(f"*.{ext}"))) + \
-            len(list(directory.rglob(f"*.{ext.upper()}")))
+                # Check if already converted
+                output_path = vid_file.with_suffix('.mp4')
+                if output_path.exists() and output_path != vid_file:
+                    continue
+
+                # If only_hevc_videos, check codec
+                if only_hevc_videos:
+                    info = get_video_info(vid_file)
+                    codec_name = None
+                    if info and 'streams' in info:
+                        for stream in info['streams']:
+                            if stream.get('codec_type') == 'video':
+                                codec_name = stream.get('codec_name')
+                                break
+                    if codec_name != 'hevc':
+                        continue
+
+                counts[ext] += 1
+
+    # Count other file types (AAE, JPG, PNG) - always count all
+    for ext in ['aae', 'jpg', 'jpeg', 'png']:
+        if filters and ext not in filters:
+            continue
+        counts[ext] = len(list(directory.rglob(
+            f"*.{ext}"))) + len(list(directory.rglob(f"*.{ext.upper()}")))
 
     return counts
 
@@ -156,62 +208,64 @@ def preserve_metadata(source: Path, destination: Path) -> None:
         stat_info = source.stat()
         os.utime(destination, (stat_info.st_atime, stat_info.st_mtime))
     except Exception as e:
-        print_warn(f"Não foi possível preservar metadata: {e}")
+        log_message('WARN', f"Could not preserve metadata: {e}")
 
 
 def remove_aae_files(directory: Path, dry_run: bool = False) -> Dict[str, int]:
     """Remove .AAE files (Apple editing metadata)"""
     stats = {'deleted': 0, 'failed': 0}
 
-    print_info("\n=== REMOVING .AAE FILES ===")
+    log_message('INFO', "\n=== REMOVING .AAE FILES ===")
 
     aae_files = list(directory.rglob('*.aae')) + list(directory.rglob('*.AAE'))
 
     if not aae_files:
-        print_info("No .AAE files found.")
+        log_message('INFO', "No .AAE files found.")
         return stats
 
-    print_info(f"Found {len(aae_files)} .AAE file(s)")
+    log_message('INFO', f"Found {len(aae_files)} .AAE file(s)")
 
     for aae_file in sorted(aae_files):
         if dry_run:
-            print_info(f"[DRY RUN] Would delete: {aae_file.name}")
+            log_message('INFO', f"[DRY RUN] Would delete: {aae_file.name}")
             stats['deleted'] += 1
         else:
             try:
-                print_info(f"Deleting: {aae_file.name}")
+                log_message('INFO', f"Deleting: {aae_file.name}")
                 aae_file.unlink()
                 stats['deleted'] += 1
-                print_success(f"Deleted: {aae_file.name}")
+                log_message('SUCCESS', f"Deleted: {aae_file.name}")
             except Exception as e:
-                print_error(f"Error deleting {aae_file.name}: {e}")
+                log_message('ERROR', f"Error deleting {aae_file.name}: {e}")
                 stats['failed'] += 1
 
     return stats
 
 
-def convert_image_pillow(input_path: Path, output_format: str = 'PNG') -> Tuple[bool, Path]:
+def convert_image_pillow(input_path: Path, output_format: str = 'JPEG') -> Tuple[bool, Path]:
     """
-    Converts HEIC/HEIF image using Pillow (lossless)
-    PNG is used instead of JPEG to avoid quality loss
+    Converts HEIC/HEIF image using Pillow
+    JPEG 95% is default for best quality/size balance
+    PNG is available for lossless conversion
     """
     try:
         from PIL import Image
         from pillow_heif import register_heif_opener
         register_heif_opener()
 
-        ext = '.png' if output_format.upper() == 'PNG' else '.jpg'
+        ext = '.jpg' if output_format.upper() == 'JPEG' else '.png'
         output_path = input_path.with_suffix(ext)
 
         if output_path.exists():
-            print_warn(f"File already exists: {output_path.name}")
+            log_message('WARN', f"File already exists: {output_path.name}")
             return False, output_path
 
-        print_info(f"Converting: {input_path.name} → {output_path.name}")
+        log_message(
+            'INFO', f"Converting: {input_path.name} → {output_path.name}")
 
         with Image.open(input_path) as img:
             # Apply EXIF orientation automatically
-            if hasattr(img, '_getexif') and img._getexif() is not None:
+            if hasattr(img, 'getexif') and img.getexif() is not None:
                 from PIL import ImageOps
                 img = ImageOps.exif_transpose(img)
 
@@ -219,7 +273,7 @@ def convert_image_pillow(input_path: Path, output_format: str = 'PNG') -> Tuple[
             if img.mode not in ('RGB', 'L'):
                 img = img.convert('RGB')
 
-            # Save with maximum quality and proper resize filter
+            # Save with maximum quality
             if output_format.upper() == 'PNG':
                 # PNG: maximum lossless compression (reduces size without quality loss)
                 img.save(output_path, 'PNG', optimize=True, compress_level=9)
@@ -229,36 +283,37 @@ def convert_image_pillow(input_path: Path, output_format: str = 'PNG') -> Tuple[
                          subsampling=0, optimize=True)
 
         preserve_metadata(input_path, output_path)
-        print_success(f"Converted: {output_path.name}")
+        log_message('SUCCESS', f"Converted: {output_path.name}")
         return True, output_path
 
     except ImportError:
-        print_warn("Pillow/pillow-heif not available, using ImageMagick")
+        log_message(
+            'WARN', "Pillow/pillow-heif not available, using ImageMagick")
         return False, input_path
     except Exception as e:
-        print_error(f"Error converting with Pillow: {e}")
+        log_message('ERROR', f"Error converting with Pillow: {e}")
         return False, input_path
 
 
-def convert_image_imagemagick(input_path: Path, output_format: str = 'PNG') -> Tuple[bool, Path]:
+def convert_image_imagemagick(input_path: Path, output_format: str = 'JPEG') -> Tuple[bool, Path]:
     """
     Converts image using ImageMagick (fallback)
     """
-    ext = '.png' if output_format.upper() == 'PNG' else '.jpg'
+    ext = '.jpg' if output_format.upper() == 'JPEG' else '.png'
     output_path = input_path.with_suffix(ext)
 
     if output_path.exists():
-        print_warn(f"File already exists: {output_path.name}")
+        log_message('WARN', f"File already exists: {output_path.name}")
         return False, output_path
 
-    print_info(f"Converting: {input_path.name} → {output_path.name}")
+    log_message('INFO', f"Converting: {input_path.name} → {output_path.name}")
 
     try:
-        # Detectar qual comando usar (magick para v7+ ou convert para v6)
+        # Detect which command to use (magick for v7+ or convert for v6)
         imagemagick_cmd = 'magick' if shutil.which('magick') else 'convert'
 
         if output_format.upper() == 'PNG':
-            # PNG com compressão lossless máxima (reduz tamanho sem perder qualidade)
+            # PNG with maximum lossless compression
             cmd = [
                 imagemagick_cmd, str(input_path),
                 '-auto-orient',
@@ -270,7 +325,7 @@ def convert_image_imagemagick(input_path: Path, output_format: str = 'PNG') -> T
                 str(output_path)
             ]
         else:
-            # JPEG com qualidade 95 (ótimo balanço qualidade/tamanho)
+            # JPEG quality 95 (great quality/size balance)
             cmd = [
                 imagemagick_cmd, str(input_path),
                 '-quality', '95',
@@ -284,16 +339,16 @@ def convert_image_imagemagick(input_path: Path, output_format: str = 'PNG') -> T
 
         if result.returncode == 0 and output_path.exists() and output_path.stat().st_size > 0:
             preserve_metadata(input_path, output_path)
-            print_success(f"Converted: {output_path.name}")
+            log_message('SUCCESS', f"Converted: {output_path.name}")
             return True, output_path
         else:
-            print_error(f"Conversion failed: {input_path.name}")
+            log_message('ERROR', f"Conversion failed: {input_path.name}")
             if output_path.exists():
                 output_path.unlink()
             return False, input_path
 
     except Exception as e:
-        print_error(f"Error converting: {e}")
+        log_message('ERROR', f"Error converting: {e}")
         if output_path.exists():
             output_path.unlink()
         return False, input_path
@@ -306,10 +361,10 @@ def convert_image(input_path: Path, use_png: bool = False) -> Tuple[bool, Path]:
     """
     output_format = 'PNG' if use_png else 'JPEG'
 
-    # Tentar com Pillow primeiro (melhor qualidade)
+    # Try with Pillow first (better quality)
     success, output_path = convert_image_pillow(input_path, output_format)
 
-    # Se Pillow falhar, usar ImageMagick
+    # If Pillow fails, fall back to ImageMagick
     if not success and not output_path.exists():
         success, output_path = convert_image_imagemagick(
             input_path, output_format)
@@ -334,18 +389,18 @@ def get_video_info(input_path: Path) -> Dict:
             import json
             return json.loads(result.stdout)
     except Exception as e:
-        print_warn(f"Error getting video info: {e}")
+        log_message('WARN', f"Error getting video info: {e}")
 
     return {}
 
 
-def convert_video(input_path: Path, codec: str = 'h265', quality: str = 'high', resize: str = 'none') -> Tuple[bool, Path]:
+def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'high', resize: str = 'none') -> Tuple[bool, Path]:
     """
     Converts video with maximum quality preserved
 
     Codec options:
+    - h264: Maximum compatibility (RECOMMENDED)
     - h265 (HEVC): Best compression, superior quality, smaller files
-    - h264: Most compatible, excellent quality (RECOMMENDED for maximum compatibility)
     - copy: Remux only (no re-encoding)
 
     Quality options:
@@ -355,11 +410,11 @@ def convert_video(input_path: Path, codec: str = 'h265', quality: str = 'high', 
     """
     output_path = input_path.with_suffix('.mp4')
 
-    if output_path.exists():
-        print_warn(f"File already exists: {output_path.name}")
+    if output_path.exists() and output_path != input_path:
+        log_message('WARN', f"File already exists: {output_path.name}")
         return False, output_path
 
-    print_info(f"Converting video: {input_path.name}")
+    log_message('INFO', f"Converting video: {input_path.name}")
 
     # Get video information
     video_info = get_video_info(input_path)
@@ -380,63 +435,55 @@ def convert_video(input_path: Path, codec: str = 'h265', quality: str = 'high', 
     # Warn if 4K (will take a while)
     if height >= 2160:
         file_size = input_path.stat().st_size / (1024 * 1024)
-        print_warn(
-            f"  4K video detected ({width}x{height})! Size: {file_size:.1f} MB")
-        print_warn(
-            f"  Estimated time: {duration * 0.5:.0f}-{duration * 1:.0f} minutes")
+        log_message(
+            'WARN', f"  4K video detected ({width}x{height}) — size: {file_size:.1f} MB")
+        log_message(
+            'WARN', f"  Estimated time: {duration * 0.5:.0f}-{duration * 1:.0f} minutes")
         if resize == 'none':
-            print_info(
-                f"  Tip: Use --resize 2k to convert 3-4x faster")
+            log_message(
+                'INFO', f"  Tip: use --resize 2k to speed up conversion (approx 3-4x)")
 
-    # Determinar resolução de saída
+    # Determine output resolution
     scale_filter = []
     if resize != 'none' and resize != '4k':
         target_height = 1440 if resize in ['2k', '1440p'] else 1080
 
-        # Só redimensiona se o vídeo for MAIOR que o alvo
+        # Only resize if the video is LARGER than the target
         if height > target_height:
             scale_filter = [
                 '-vf', f'scale=-2:{target_height}:flags=lanczos,scale=trunc(iw/2)*2:trunc(ih/2)*2']
-            print_info(
-                f"  Redimensionando: {width}x{height} → altura {target_height}px")
+            log_message(
+                'INFO', f"  Resizing: {width}x{height} → target height {target_height}px")
         else:
-            # Vídeo já é menor ou igual, não redimensiona
-            print_info(
-                f"  Mantendo resolução original: {width}x{height} (já é ≤ {target_height}px)")
+            log_message(
+                'INFO', f"  Keeping original resolution: {width}x{height} (already ≤ {target_height}px)")
 
-    # Forçar H.264 para vídeos de celulares (melhor compatibilidade)
-    # HEVC de celulares pode ter problemas de reprodução em alguns players
-    use_h264 = True
-
-    # Detectar aceleração de hardware
+    # Detect hardware acceleration
     hw_accel = check_hardware_acceleration()
 
-    # Ajustar qualidade automaticamente baseado na resolução
-    # Vídeos maiores (4K, 2K) usam CRF mais alto para economizar espaço
-    # Vídeos menores (1080p ou menos) podem usar CRF mais baixo
+    # Adjust quality automatically based on resolution
     auto_crf = None
     if quality == 'high':
         if height >= 2160:  # 4K
-            auto_crf = '23'  # Qualidade boa, arquivo menor
-            print_info(
-                f"  Qualidade ajustada: CRF 23 (4K - otimizado para tamanho)")
+            auto_crf = '23'
+            log_message(
+                'INFO', f"  Auto quality set: CRF 23 (4K - size optimized)")
         elif height >= 1440:  # 2K
-            auto_crf = '20'  # Qualidade alta
-            print_info(f"  Qualidade ajustada: CRF 20 (2K - alta qualidade)")
-        else:  # 1080p ou menor
-            auto_crf = '18'  # Qualidade muito alta
-            print_info(
-                f"  Qualidade ajustada: CRF 18 (≤1080p - máxima qualidade)")
+            auto_crf = '20'
+            log_message(
+                'INFO', f"  Auto quality set: CRF 20 (2K - high quality)")
+        else:  # 1080p or smaller
+            auto_crf = '18'
+            log_message(
+                'INFO', f"  Auto quality set: CRF 18 (≤1080p - maximum quality)")
     else:
-        # quality == 'medium'
         auto_crf = '23'
 
-    # Configurar codec de vídeo com aceleração de hardware se disponível
-    if use_h264 or codec == 'h264':
+    # Configure video codec with hardware acceleration if available
+    if codec == 'h264':
         if hw_accel == 'qsv':
-            # Intel Quick Sync Video (2-5x mais rápido)
-            print_info(
-                "  Usando Intel Quick Sync Video (aceleração de hardware)")
+            log_message(
+                'INFO', "  Using Intel Quick Sync Video (hardware acceleration)")
             video_codec = [
                 '-c:v', 'h264_qsv',
                 '-global_quality', auto_crf,
@@ -444,22 +491,20 @@ def convert_video(input_path: Path, codec: str = 'h265', quality: str = 'high', 
                 '-profile:v', 'high'
             ]
         elif hw_accel == 'nvenc':
-            # NVIDIA NVENC
-            print_info("  Usando NVIDIA NVENC (aceleração de hardware)")
+            log_message('INFO', "  Using NVIDIA NVENC (hardware acceleration)")
             video_codec = [
                 '-c:v', 'h264_nvenc',
                 '-cq', auto_crf,
-                '-preset', 'p4',  # p4 = medium quality
+                '-preset', 'p4',
                 '-profile:v', 'high'
             ]
         elif quality == 'lossless':
             video_codec = ['-c:v', 'libx264', '-qp', '0', '-preset', 'medium']
         else:
-            # Software encoding (sem aceleração)
             video_codec = [
                 '-c:v', 'libx264',
                 '-crf', auto_crf,
-                '-preset', 'medium',  # medium é mais rápido que slow
+                '-preset', 'medium',
                 '-profile:v', 'high',
                 '-level', '4.1'
             ]
@@ -478,43 +523,43 @@ def convert_video(input_path: Path, codec: str = 'h265', quality: str = 'high', 
     else:
         video_codec = ['-c:v', 'copy']
 
-    # Configurar codec de áudio (AAC alta qualidade)
+    # Configure audio codec (AAC high quality)
     if quality == 'lossless':
         audio_codec = ['-c:a', 'flac']
     else:
         audio_codec = ['-c:a', 'aac', '-b:a', '256k', '-ar', '48000']
 
-    # Construir comando FFmpeg
+    # Build FFmpeg command
     cmd = [
         'ffmpeg',
         '-i', str(input_path),
-        '-progress', 'pipe:1',  # Mostrar progresso
+        '-progress', 'pipe:1',
         *video_codec,
-        *scale_filter,  # Aplicar redimensionamento se necessário
+        *scale_filter,
         *audio_codec,
         '-movflags', '+faststart',
         '-map_metadata', '0',
-        '-pix_fmt', 'yuv420p',  # Compatibilidade
-        '-y',  # Sobrescrever sem perguntar
+        '-pix_fmt', 'yuv420p',
+        '-y',
         str(output_path)
     ]
 
-    print_info(
-        f"  Codec: H.264 | CRF: {auto_crf if quality != 'lossless' else 'lossless'} | Preset: medium")
+    log_message(
+        'INFO', f"  Codec: {codec.upper()} | CRF: {auto_crf if quality != 'lossless' else 'lossless'} | Preset: medium")
     if height >= 2160:
-        print_info(f"  Processando vídeo 4K... Aguarde, isso vai demorar!")
+        log_message('INFO', "  Processing 4K video... this may take a while")
     else:
-        print_info(f"  Convertendo... (alguns minutos)")
+        log_message('INFO', "  Converting... (this can take a few minutes)")
 
     import time
     start_time = time.time()
 
     try:
-        # 60 min timeout para 4K
         result = subprocess.run(cmd, capture_output=True,
                                 text=True, timeout=3600)
     except subprocess.TimeoutExpired:
-        print_error(f"Timeout ao converter vídeo (60 min): {input_path.name}")
+        log_message(
+            'ERROR', f"Timeout converting video (60 min): {input_path.name}")
         if output_path.exists():
             output_path.unlink()
         return False, input_path
@@ -524,20 +569,18 @@ def convert_video(input_path: Path, codec: str = 'h265', quality: str = 'high', 
     if result.returncode == 0 and output_path.exists() and output_path.stat().st_size > 0:
         preserve_metadata(input_path, output_path)
 
-        # Mostrar comparação de tamanhos
+        # Show size comparison
         original_size = input_path.stat().st_size / (1024 * 1024)
         converted_size = output_path.stat().st_size / (1024 * 1024)
         ratio = (converted_size / original_size) * 100
-
-        print_success(f"Convertido: {output_path.name}")
-        print_info(
-            f"  Original: {original_size:.2f} MB | Convertido: {converted_size:.2f} MB ({ratio:.1f}%)")
+        log_message('SUCCESS', f"Converted: {output_path.name}")
+        log_message(
+            'INFO', f"  Original: {original_size:.2f} MB | Converted: {converted_size:.2f} MB ({ratio:.1f}%)")
         return True, output_path
     else:
-        print_error(f"Erro ao converter vídeo: {input_path.name}")
+        log_message('ERROR', f"Error converting video: {input_path.name}")
         if result.stderr:
-            # Últimos 200 chars do erro
-            print_error(f"  {result.stderr[-200:]}")
+            log_message('ERROR', f"  {result.stderr[-200:]}")
         if output_path.exists():
             output_path.unlink()
         return False, input_path
@@ -545,8 +588,8 @@ def convert_video(input_path: Path, codec: str = 'h265', quality: str = 'high', 
 
 def process_directory(
     directory: Path,
-    image_format: str = 'PNG',
-    video_codec: str = 'h265',
+    image_format: str = 'JPEG',
+    video_codec: str = 'h264',
     video_quality: str = 'high',
     dry_run: bool = False,
     delete_originals: bool = False,
@@ -554,8 +597,16 @@ def process_directory(
     only_images: bool = False,
     only_videos: bool = False,
     only_hevc_videos: bool = False
-) -> Tuple[Dict[str, int], List[Path]]:
-    """Processa todos os arquivos no diretório"""
+) -> Tuple[Dict[str, int], List[Path], List[Path]]:
+    """
+    Process all files in the directory
+
+    Returns:
+        Tuple containing:
+        - stats: Dictionary with conversion statistics
+        - converted_originals: List of files that were just converted
+        - already_converted_originals: List of files that were already converted
+    """
     stats = {
         'images_converted': 0,
         'videos_converted': 0,
@@ -565,44 +616,59 @@ def process_directory(
         'videos_skipped': 0
     }
 
-    # Lista de arquivos originais convertidos com sucesso
-    converted_originals = []
-    # Lista de imagens originais que já possuem arquivo convertido
-    already_converted_images = []
+    # Separate lists for tracking
+    converted_originals = []  # Files converted in THIS run
+    already_converted_originals = []  # Files that were ALREADY converted
 
-    # Processar imagens (se não for only_videos)
+    # Process images
+    image_extensions = []
     if not only_videos:
-        print_info("\n=== PROCESSANDO IMAGENS ===")
+        log_message('INFO', "\n=== PROCESSING IMAGES ===")
         image_extensions = ['*.heic', '*.HEIC', '*.heif', '*.HEIF']
+
     image_files = []
     for ext in image_extensions:
         image_files.extend(directory.rglob(ext))
 
     for img_file in sorted(image_files):
-        # Verificar se já existe arquivo convertido (mesmo nome, extensão .jpg ou .png)
-        jpg_path = img_file.with_suffix('.jpg')
-        png_path = img_file.with_suffix('.png')
-        if jpg_path.exists() or png_path.exists():
+        # Check if converted file already exists
+        converted_files = [
+            img_file.with_suffix(ext) for ext in ['.jpg', '.png', '.jpeg']
+        ]
+        matching_file = None
+        for converted_file in converted_files:
+            if converted_file.exists() and converted_file.stat().st_size > 0:
+                matching_file = converted_file
+                break
+
+        if matching_file:
+            log_message(
+                'INFO',
+                f"Skipping {img_file.name}: already converted to {matching_file.name}"
+            )
+            already_converted_originals.append(img_file)
             stats['images_skipped'] += 1
-            already_converted_images.append(img_file)
             continue
+
+        # Convert new files
         if dry_run:
-            print_info(f"[DRY RUN] Converteria: {img_file.name}")
+            log_message('INFO', f"[DRY RUN] Would convert: {img_file.name}")
             stats['images_converted'] += 1
         else:
-            # Sempre usar JPEG 95% (use_png=False)
-            success, _ = convert_image(img_file, use_png=False)
+            success, output_path = convert_image(
+                img_file, use_png=(image_format.upper() == 'PNG')
+            )
             if success:
                 stats['images_converted'] += 1
                 converted_originals.append(img_file)
-            elif _.exists():
+            elif output_path.exists():
                 stats['images_skipped'] += 1
             else:
                 stats['images_failed'] += 1
 
     # Process videos (if not only_images)
     if not only_images:
-        print_info("\n=== PROCESSING VIDEOS ===")
+        log_message('INFO', "\n=== PROCESSING VIDEOS ===")
         video_extensions = ['*.mov', '*.MOV', '*.mp4', '*.MP4']
         video_files = []
         for ext in video_extensions:
@@ -611,6 +677,17 @@ def process_directory(
         for vid_file in sorted(video_files):
             # Skip already converted files
             if '_converted' in vid_file.stem:
+                continue
+
+            # Check if output already exists
+            output_path = vid_file.with_suffix('.mp4')
+            if output_path.exists() and output_path != vid_file:
+                log_message(
+                    'INFO',
+                    f"Skipping {vid_file.name}: already converted to {output_path.name}"
+                )
+                already_converted_originals.append(vid_file)
+                stats['videos_skipped'] += 1
                 continue
 
             # Detect codec if needed
@@ -623,17 +700,21 @@ def process_directory(
                             codec_name = stream.get('codec_name')
                             break
                 if codec_name != 'hevc':
-                    print_info(
-                        f"Skipping {vid_file.name}: codec {codec_name or 'unknown'} (not HEVC/H.265)")
+                    log_message(
+                        'INFO',
+                        f"Skipping {vid_file.name}: codec {codec_name or 'unknown'} (not HEVC/H.265)"
+                    )
                     stats['videos_skipped'] += 1
                     continue
 
             if dry_run:
-                print_info(f"[DRY RUN] Would convert: {vid_file.name}")
+                log_message(
+                    'INFO', f"[DRY RUN] Would convert: {vid_file.name}")
                 stats['videos_converted'] += 1
             else:
                 success, _ = convert_video(
-                    vid_file, codec=video_codec, quality=video_quality, resize=resize)
+                    vid_file, codec=video_codec, quality=video_quality, resize=resize
+                )
                 if success:
                     stats['videos_converted'] += 1
                     converted_originals.append(vid_file)
@@ -642,8 +723,7 @@ def process_directory(
                 else:
                     stats['videos_failed'] += 1
 
-    # Also return already converted images for possible deletion
-    return stats, converted_originals + already_converted_images
+    return stats, converted_originals, already_converted_originals
 
 
 def install_command() -> int:
@@ -659,8 +739,8 @@ def install_command() -> int:
 
     # Check if wrapper exists
     if not wrapper_path.exists():
-        print_error(f"Wrapper file not found: {wrapper_path}")
-        print_info("Run the script normally first to create it.")
+        log_message('ERROR', f"Wrapper file not found: {wrapper_path}")
+        log_message('INFO', "Run the script normally first to create it.")
         return 1
 
     # Check if already exists
@@ -668,9 +748,9 @@ def install_command() -> int:
         with open(bashrc_path, 'r') as f:
             content = f.read()
             if 'alias converter=' in content:
-                print_info("Alias 'converter' already exists in ~/.bashrc")
-                print_info("Updating...")
-                # Remove old lines
+                log_message(
+                    'INFO', "Alias 'converter' already exists in ~/.bashrc")
+                log_message('INFO', "Updating...")
                 lines = content.split('\n')
                 lines = [line for line in lines if 'alias converter=' not in line]
                 content = '\n'.join(lines)
@@ -681,7 +761,7 @@ def install_command() -> int:
     with open(bashrc_path, 'a') as f:
         f.write(f"\n# Media Converter\n{alias_line}\n")
 
-    print_success("Alias added to ~/.bashrc")
+    log_message('SUCCESS', "Alias added to ~/.bashrc")
     print()
     print("=" * 60)
     print(f"{Color.GREEN}  INSTALLATION COMPLETE!{Color.NC}")
@@ -701,6 +781,7 @@ def install_command() -> int:
 
 
 def main():
+    setup_logging()
     parser = argparse.ArgumentParser(
         description='Media Converter for Universal Formats with Maximum Quality',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -713,12 +794,12 @@ Usage examples:
     %(prog)s /path/to/photos --dry-run
 
 Image formats:
-    PNG  - Lossless (recommended, larger files)
-    JPEG - High quality with compression (smaller files)
+    JPEG - High quality 95%% compression (recommended, smaller files)
+    PNG  - Lossless (larger files)
 
 Video codecs:
-    h265 - HEVC, best compression and quality (recommended)
-    h264 - H.264, more compatible
+    h264 - H.264, maximum compatibility (recommended)
+    h265 - HEVC, best compression and quality
     copy - Remux only, no re-encoding
 
 Video quality:
@@ -730,7 +811,7 @@ Video resizing:
     4k       - Keep original resolution (default)
     2k/1440p - 2560x1440 (best quality/speed balance)
     1080p    - 1920x1080 (faster, smaller size)
-        """
+            """
     )
     parser.add_argument(
         '--only-hevc-videos',
@@ -747,13 +828,13 @@ Video resizing:
         '--image-format',
         choices=['PNG', 'JPEG', 'png', 'jpeg'],
         default='PNG',
-        help='Output format for images (default: PNG)'
+        help='Output format for images (default: JPEG 95%%)'
     )
     parser.add_argument(
         '--video-codec',
         choices=['h265', 'h264', 'copy'],
         default='h265',
-        help='Codec for videos (default: h265/HEVC)'
+        help='Codec for videos (default: h264 for maximum compatibility)'
     )
     parser.add_argument(
         '--video-quality',
@@ -800,6 +881,18 @@ Video resizing:
 
     args = parser.parse_args()
 
+    # CORREÇÃO: Garantir que o padrão seja JPEG, não PNG
+    # Apesar do parser definir PNG como padrão, vamos forçar JPEG
+    if args.image_format.upper() == 'PNG' and not any(['--image-format' in arg for arg in sys.argv]):
+        args.image_format = 'JPEG'
+        log_message('INFO', "Using JPEG as default image format (95% quality)")
+
+    # CORREÇÃO: Garantir que h264 seja o padrão real
+    if args.video_codec == 'h265' and not any(['--video-codec' in arg for arg in sys.argv]):
+        args.video_codec = 'h264'
+        log_message(
+            'INFO', "Using H.264 as default video codec (maximum compatibility)")
+
     # If install, run and exit
     if args.install:
         return install_command()
@@ -810,29 +903,30 @@ Video resizing:
     print("=" * 60 + "\n")
 
     # Check dependencies
-    print_info("Checking dependencies...")
+    log_message('INFO', "Checking dependencies...")
     if not check_dependencies():
         return 1
 
     # Check hardware acceleration
     hw_accel = check_hardware_acceleration()
     if hw_accel == 'qsv':
-        print_success(
-            "✓ Hardware acceleration: Intel Quick Sync Video detected!")
-        print_info("  Video conversion will be 2-5x faster")
+        log_message(
+            'SUCCESS', "✓ Hardware acceleration: Intel Quick Sync Video detected!")
+        log_message('INFO', "  Video conversion will be 2-5x faster")
     elif hw_accel == 'nvenc':
-        print_success("✓ Hardware acceleration: NVIDIA NVENC detected!")
-        print_info("  Video conversion will be 3-5x faster")
+        log_message(
+            'SUCCESS', "✓ Hardware acceleration: NVIDIA NVENC detected!")
+        log_message('INFO', "  Video conversion will be 3-5x faster")
     elif hw_accel == 'vaapi':
-        print_success("✓ Hardware acceleration: VAAPI detected!")
-        print_info("  Video conversion will be 2-3x faster")
+        log_message('SUCCESS', "✓ Hardware acceleration: VAAPI detected!")
+        log_message('INFO', "  Video conversion will be 2-3x faster")
     else:
-        print_warn("⚠ Hardware acceleration not detected")
-        print_info("  Conversion will use CPU (slower, but works)")
+        log_message('WARN', "⚠ Hardware acceleration not detected")
+        log_message('INFO', "  Conversion will use CPU (slower, but works)")
 
-    print()  # Blank line
+    print()
 
-    print_success("All dependencies are installed!\n")
+    log_message('SUCCESS', "All dependencies are installed!\n")
 
     # Get directory
     if args.directory:
@@ -844,21 +938,26 @@ Video resizing:
 
     # Validate directory
     if not start_dir.exists() or not start_dir.is_dir():
-        print_error(f"Directory not found: {start_dir}")
+        log_message('ERROR', f"Directory not found: {start_dir}")
         return 1
 
-    # Count files
-    print_info(
-        f"Searching for HEIC/HEIF files and H.265/HEVC videos in: {start_dir}")
-    file_counts = count_files(start_dir)
-    total_files = sum(file_counts.values())
-
-    if total_files == 0:
-        print_warn("No HEIC, HEIF, MOV or MP4 files found.")
+    # Show all file extensions found
+    print(f"\n{Color.CYAN}=== ALL FILE TYPES FOUND ==={Color.NC}")
+    from collections import Counter
+    all_files = list(start_dir.rglob("*"))
+    ext_counter = Counter(f.suffix.lower()
+                          for f in all_files if f.is_file() and f.suffix)
+    if ext_counter:
+        for ext, count in sorted(ext_counter.items(), key=lambda x: (-x[1], x[0])):
+            print(
+                f"  {ext[1:].upper() if ext.startswith('.') else ext.upper()}: {count} file(s)")
+        print(
+            f"  {Color.MAGENTA}TOTAL: {sum(ext_counter.values())} file(s){Color.NC}\n")
+    else:
+        log_message('WARN', "No files found in the directory.")
         return 0
 
-    # Show filtered summary according to selected option
-    print(f"\n{Color.CYAN}=== FILES FOUND ==={Color.NC}")
+    # Show filtered summary
     shown_types = []
     if args.only_images:
         shown_types = ['heic', 'heif']
@@ -866,6 +965,17 @@ Video resizing:
         shown_types = ['mov', 'mp4']
     else:
         shown_types = ['heic', 'heif', 'mov', 'mp4']
+
+    log_message(
+        'INFO', f"Searching for HEIC/HEIF files and H.265/HEVC videos in: {start_dir}")
+    file_counts = count_files(start_dir, shown_types)
+    total_files = sum(file_counts.values())
+
+    if total_files == 0:
+        log_message('WARN', "No HEIC, HEIF, MOV or MP4 files found.")
+        return 0
+
+    print(f"\n{Color.CYAN}=== SUPPORTED FILES FOUND ==={Color.NC}")
     filtered_total = 0
     for ext in shown_types:
         count = file_counts.get(ext, 0)
@@ -876,16 +986,24 @@ Video resizing:
 
     # Show settings
     print(f"{Color.CYAN}=== SETTINGS ==={Color.NC}")
-    print(f"  Image format: JPEG 95%")
-    print(f"  Video codec: H.264")
+    print(f"  Image format: {args.image_format.upper()}")
+    print(f"  Video codec: {args.video_codec.upper()}")
     print(f"  Video quality: {args.video_quality.upper()}")
     if args.resize != 'none':
         print(f"  Resize videos: {args.resize.upper()}")
+    else:
+        print("  Resize videos: None (keep original resolution)")
     if args.dry_run:
-        print(f"  {Color.YELLOW}DRY RUN MODE (simulation){Color.NC}")
+        print(
+            f"  {Color.YELLOW}DRY RUN MODE (simulation only, no files will be processed){Color.NC}")
+    print(f"  Process only images: {'Yes' if args.only_images else 'No'}")
+    print(f"  Process only videos: {'Yes' if args.only_videos else 'No'}")
+    print(
+        f"  Delete originals after conversion: {'Yes' if args.delete_originals else 'No'}")
+    print(f"  Remove .AAE files: {'Yes' if args.remove_aae else 'No'}")
     print()
 
-    # Show actions and selected mode
+    # Show actions
     print(f"{Color.CYAN}=== ACTIONS TO BE PERFORMED ==={Color.NC}")
     if args.only_images:
         print(f"  • MODE: Only images will be converted (HEIC/HEIF → JPEG 95%)")
@@ -919,15 +1037,15 @@ Video resizing:
     # Confirm
     if not args.dry_run:
         confirm = input(
-            f"Proceed with conversion? (y/N): ").strip().lower()
-        if confirm not in ['s', 'sim', 'y', 'yes']:
-            print_info("Conversion cancelled by user.")
+            "Proceed with conversion? Type YES to continue: ").strip()
+        if confirm != 'YES':
+            log_message('INFO', "Conversion cancelled by user.")
             return 0
         print()
 
     # Process files
-    print_info("Starting conversion...\n")
-    stats, converted_files = process_directory(
+    log_message('INFO', "Starting conversion...\n")
+    stats, converted_files, already_converted_files = process_directory(
         start_dir,
         image_format=args.image_format,
         video_codec=args.video_codec,
@@ -940,84 +1058,152 @@ Video resizing:
         only_hevc_videos=args.only_hevc_videos
     )
 
-    # Check and ask about .AAE files
+    # Handle .AAE files
     aae_stats = None
     if not args.dry_run:
-        # Count .AAE files
         aae_files = list(start_dir.rglob('*.AAE')) + \
             list(start_dir.rglob('*.aae'))
 
         if aae_files:
             print(f"\n{Color.CYAN}=== .AAE FILES FOUND ==={Color.NC}")
-            print_info(
-                f"Found {len(aae_files)} Apple .AAE metadata file(s)")
-            print_info(
-                "These files contain edits made in the Photos app on your phone")
+            log_message(
+                'INFO', f"Found {len(aae_files)} Apple .AAE metadata file(s)")
+            log_message(
+                'INFO', "These files contain edits made in the Photos app")
 
             confirm_aae = input(
-                f"{Color.YELLOW}Delete .AAE files? (type 'YES' in uppercase): {Color.NC}").strip()
+                f"{Color.YELLOW}Delete .AAE files? (type 'YES' in uppercase): {Color.NC}"
+            ).strip()
 
             if confirm_aae == 'YES':
                 aae_stats = remove_aae_files(start_dir, dry_run=False)
             else:
-                print_info(".AAE files preserved.")
+                log_message('INFO', ".AAE files preserved.")
     elif args.remove_aae:
-        # Dry-run mode with --remove-aae explicitly
         aae_stats = remove_aae_files(start_dir, dry_run=True)
 
-    # Ask about deleting original files
-    if converted_files and not args.dry_run:
-        print(f"\n{Color.CYAN}=== ORIGINAL FILES ==={Color.NC}")
-        print_info(
-            f"{len(converted_files)} file(s) were successfully converted")
+    # Centralized deletion logic - FIXED
+    if args.delete_originals and (converted_files or already_converted_files) and not args.dry_run:
+        print(f"\n{Color.CYAN}=== ORIGINAL FILES TO DELETE ==={Color.NC}")
 
+        if converted_files:
+            print(
+                f"  {Color.GREEN}Files converted in this run:{Color.NC} {len(converted_files)}")
+        if already_converted_files:
+            print(
+                f"  {Color.YELLOW}Files already converted (originals still present):{Color.NC} {len(already_converted_files)}")
+
+        # Show newly converted originals
+        if converted_files:
+            print(f"\n{Color.GREEN}Newly converted originals:{Color.NC}")
+            for original_file in sorted(converted_files):
+                print(f"  - {original_file.name}")
+
+        # Show already converted originals
+        if already_converted_files:
+            print(
+                f"\n{Color.YELLOW}Already converted originals (can also be deleted):{Color.NC}")
+            for original_file in sorted(already_converted_files):
+                print(f"  - {original_file.name}")
+
+        print()
+        total_to_delete = len(converted_files) + len(already_converted_files)
         confirm_delete = input(
-            f"{Color.RED}Delete original files? (type 'YES' in uppercase): {Color.NC}").strip()
+            f"{Color.RED}Delete {total_to_delete} original file(s)? "
+            f"Type 'YES' to confirm: {Color.NC}"
+        ).strip()
 
         if confirm_delete == 'YES':
             deleted_count = 0
             failed_delete = 0
 
-            for original_file in converted_files:
+            # Delete newly converted files
+            for original_file in sorted(converted_files):
                 try:
-                    print_info(f"Deleting: {original_file.name}")
-                    original_file.unlink()
-                    deleted_count += 1
-                    print_success(f"Deleted: {original_file.name}")
+                    if original_file.exists():
+                        # Verify converted file exists
+                        possible_conversions = [
+                            original_file.with_suffix('.jpg'),
+                            original_file.with_suffix('.png'),
+                            original_file.with_suffix('.mp4')
+                        ]
+
+                        converted_exists = False
+                        for conv_file in possible_conversions:
+                            if conv_file.exists() and conv_file.stat().st_size > 0 and conv_file != original_file:
+                                converted_exists = True
+                                break
+
+                        if converted_exists:
+                            log_message(
+                                'INFO', f"Deleting: {original_file.name}")
+                            original_file.unlink()
+                            deleted_count += 1
+                            log_message(
+                                'SUCCESS', f"Deleted: {original_file.name}")
+                        else:
+                            log_message(
+                                'ERROR', f"Converted file not found or invalid")
+                            log_message(
+                                'WARN', f"Skipping deletion of: {original_file.name}")
+                    else:
+                        log_message(
+                            'WARN', f"File not found: {original_file.name}")
                 except Exception as e:
-                    print_error(f"Error deleting {original_file.name}: {e}")
+                    log_message(
+                        'ERROR', f"Error deleting {original_file.name}: {e}")
                     failed_delete += 1
 
-            print(f"\n{Color.GREEN}Files deleted:{Color.NC} {deleted_count}")
+            # Delete already converted files
+            for original_file in sorted(already_converted_files):
+                try:
+                    if original_file.exists():
+                        # Verify converted file exists
+                        possible_conversions = [
+                            original_file.with_suffix('.jpg'),
+                            original_file.with_suffix('.png'),
+                            original_file.with_suffix('.jpeg'),
+                            original_file.with_suffix('.mp4')
+                        ]
+
+                        converted_exists = False
+                        for conv_file in possible_conversions:
+                            if conv_file.exists() and conv_file.stat().st_size > 0 and conv_file != original_file:
+                                converted_exists = True
+                                break
+
+                        if converted_exists:
+                            log_message(
+                                'INFO', f"Deleting: {original_file.name}")
+                            original_file.unlink()
+                            deleted_count += 1
+                            log_message(
+                                'SUCCESS', f"Deleted: {original_file.name}")
+                        else:
+                            log_message(
+                                'ERROR', f"Converted file not found or invalid")
+                            log_message(
+                                'WARN', f"Skipping deletion of: {original_file.name}")
+                    else:
+                        log_message(
+                            'WARN', f"File not found: {original_file.name}")
+                except Exception as e:
+                    log_message(
+                        'ERROR', f"Error deleting {original_file.name}: {e}")
+                    failed_delete += 1
+
+            print(
+                f"\n{Color.GREEN}Files successfully deleted:{Color.NC} {deleted_count}")
             if failed_delete > 0:
                 print(f"{Color.RED}Failed to delete:{Color.NC} {failed_delete}")
         else:
-            print_info("Original files preserved.")
-    elif args.delete_originals and converted_files and not args.dry_run:
-        # --delete-originals used explicitly (force delete)
-        print(f"\n{Color.CYAN}=== DELETING ORIGINAL FILES ==={Color.NC}")
-        deleted_count = 0
-        failed_delete = 0
-
-        for original_file in converted_files:
-            try:
-                print_info(f"Deleting: {original_file.name}")
-                original_file.unlink()
-                deleted_count += 1
-                print_success(f"Deleted: {original_file.name}")
-            except Exception as e:
-                print_error(f"Error deleting {original_file.name}: {e}")
-                failed_delete += 1
-
-        print(f"\n{Color.GREEN}Files deleted:{Color.NC} {deleted_count}")
-        if failed_delete > 0:
-            print(f"{Color.RED}Failed to delete:{Color.NC} {failed_delete}")
-    elif args.delete_originals and not converted_files:
-        print_warn("No files were converted, nothing to delete.")
+            log_message('INFO', "Deletion cancelled by user.")
+    elif args.delete_originals and not converted_files and not already_converted_files:
+        log_message('INFO', "No original files to delete.")
 
     # Final report
     print(f"\n{Color.CYAN}{'=' * 60}{Color.NC}")
-    print_success("CONVERSION COMPLETE!")
+    log_message('SUCCESS', "CONVERSION COMPLETE!")
     print(f"{Color.CYAN}{'=' * 60}{Color.NC}\n")
 
     print(
@@ -1054,10 +1240,10 @@ if __name__ == '__main__':
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        print_warn("\n\nConversion interrupted by user.")
+        log_message('WARN', "\n\nConversion interrupted by user.")
         sys.exit(130)
     except Exception as e:
-        print_error(f"Unexpected error: {e}")
+        log_message('ERROR', f"Unexpected error: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)
