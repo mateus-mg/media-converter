@@ -1,6 +1,6 @@
 # Universal HEIC & HEVC Converter
 
-Converts HEIC/HEIF images to JPEG 95% (or PNG) and H.265/HEVC videos to H.264 (maximum compatibility). Compatible with files from iOS, GoPro, and other devices.
+Converts HEIC/HEIF images to JPEG 95% (or PNG) and MOV/MP4 videos with H.265/HEVC codec to H.264 (maximum compatibility). Compatible with files from iOS, GoPro, DJI, Samsung, Sony, and other devices. **Only videos with H.265/HEVC codec are converted; videos already in H.264 or other codecs are skipped.**
 
 ## 📋 Table of Contents
 - [Installation](#-installation)
@@ -52,7 +52,7 @@ bash
 converter
 
 # Convert specific folder with default settings
-# (JPEG 95% for images, H.264 for videos)
+# (JPEG 95% for images, H.264 for videos with H.265/HEVC codec)
 converter /path/to/photos
 
 # Convert and delete originals (CAUTION!)
@@ -78,7 +78,7 @@ converter /path/to/photos --remove-aae
 Video Conversion
 bash
 
-# Convert to H.264 (maximum compatibility - RECOMMENDED)
+# Convert only videos with H.265/HEVC codec to H.264 (maximum compatibility)
 converter /path/to/videos --video-codec h264
 
 # Convert to H.265/HEVC (better compression)
@@ -138,38 +138,38 @@ Option	Default	Description
 🎯 Key Features
 Image Conversion
 
+    ✅ Converts only HEIC/HEIF images to JPEG/PNG (other formats are skipped)
     ✅ Pillow (preferred): Maximum quality with pillow-heif backend
-
     ✅ ImageMagick (fallback): Automatic fallback if Pillow unavailable
-
     ✅ EXIF preservation: Maintains orientation and metadata
-
     ✅ Smart compression: JPEG 95% or PNG lossless compression level 9
-
     ✅ Color space conversion: Automatic RGB conversion when needed
 
 Video Conversion
 
+    ✅ Converts only MOV/MP4 videos with H.265/HEVC codec to H.264 (other codecs are skipped)
     ✅ Hardware acceleration: Auto-detects Intel QSV, NVIDIA NVENC, VAAPI
-
     ✅ Resolution-aware quality: Auto CRF: 23(4K), 20(2K), 18(≤1080p)
-
     ✅ Smart resizing: Never upscales, maintains aspect ratio
-
     ✅ Faststart: Enables web streaming compatibility
-
     ✅ Metadata preservation: Copies creation/modification dates
+    ✅ Output file: If input is already .mp4, output will be named with _converted suffix to avoid overwriting
 
-Safety Features
+Preset & Quality Logic
 
+    ✅ Preset is chosen automatically based on hardware, resolution, aspect ratio and codec:
+        - 16:9 videos use faster presets
+        - Non-16:9 videos use slower presets for better quality
+        - H.265 always uses slower presets for better compression
+    ✅ CRF is set automatically by resolution (see above)
+
+File Counting & Safety
+
+    ✅ Only files that actually need conversion are counted and processed
     ✅ No overwrites: Skips existing converted files
-
     ✅ Success verification: Only deletes originals after successful conversion
-
     ✅ Confirmation prompts: Requires 'YES' for destructive operations
-
     ✅ Error isolation: Failed conversions preserve originals
-
     ✅ Dry run mode: Preview actions without changes
 
 🛡️ Safety Guidelines
@@ -213,7 +213,10 @@ HEIC/HEIF Images:
 
 H.265/HEVC Videos:
     Detect hardware → QSV > NVENC > VAAPI > Software
-    Auto CRF based on resolution
+    Detect codec via ffprobe (not by extension)
+    Only MOV/MP4 with H.265/HEVC are converted
+    Auto CRF and preset based on resolution, aspect ratio, hardware
+    Output file: If input is .mp4, output will be named with _converted suffix
     H.264 output for maximum compatibility
 
 Quality Settings Explained
