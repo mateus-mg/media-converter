@@ -7,7 +7,9 @@ Converts HEIC/HEIF images to JPEG 95% (or PNG) and MOV/MP4 videos with H.265/HEV
 - [Quick Start](#-quick-start)
 - [Usage Examples](#-usage-examples)
 - [Options Reference](#-available-options)
+- [Interactive Menu](#-interactive-menu)
 - [Features](#-features)
+- [System Architecture](#-system-architecture)
 - [Safety](#-safety)
 - [Troubleshooting](#-troubleshooting)
 
@@ -99,9 +101,6 @@ converter /path/to/videos --video-quality medium
 # Lossless quality (very large files)
 converter /path/to/videos --video-quality lossless
 
-# Only convert HEVC/H.265 videos
-converter /path/to/videos --only-hevc-videos
-
 # Only convert videos (skip images)
 converter /path/to/videos --only-videos
 
@@ -117,7 +116,28 @@ converter /path/to/media --resize 1080p --image-format JPEG --delete-originals
 # Dry run (simulate without converting)
 converter /path/to/media --dry-run
 
-⚙️ Available Options
+## 🎛️ Interactive Menu
+
+Run without arguments for an interactive menu:
+
+```bash
+converter
+```
+
+The interactive menu provides:
+```
+1. Convert images (HEIC/HEIF)
+2. Convert videos (HEVC/H.265)
+3. Convert images and videos (batch)
+4. Remove AAE files
+5. View system status
+6. View conversion logs
+7. Check dependencies
+8. View hardware acceleration
+9. Exit
+```
+
+## ⚙️ Available Options
 Image Options
 Option	Default	Description
 --image-format FORMAT	JPEG	Output format: JPEG (95% quality) or PNG (lossless)
@@ -128,12 +148,12 @@ Option	Default	Description
 --video-quality QUALITY	high	Quality: lossless, high (CRF 18-23), medium (CRF 23)
 --resize RESOLUTION	none	Resize: 4k (keep), 2k/1440p, 1080p, none
 --only-videos	false	Process only videos (skip images)
---only-hevc-videos	false	Process only H.265/HEVC encoded videos
 Processing Options
 Option	Default	Description
 --dry-run	false	Simulate conversion without processing
 --delete-originals	false	CAUTION: Delete originals after successful conversion
 --remove-aae	false	Remove Apple .AAE editing metadata files
+--install	false	Install 'converter' command globally
 
 🎯 Key Features
 Image Conversion
@@ -171,6 +191,27 @@ File Counting & Safety
     ✅ Confirmation prompts: Requires 'YES' for destructive operations
     ✅ Error isolation: Failed conversions preserve originals
     ✅ Dry run mode: Preview actions without changes
+
+## 🏗️ System Architecture
+
+The system is composed of the following modules:
+
+| Module | Description |
+|--------|-------------|
+| `media_converter.py` | Core conversion logic for images and videos |
+| `cli_manager.py` | Interactive CLI menu interface |
+| `conversion_db.py` | JSON database for tracking converted files (deduplication) |
+| `config.py` | Configuration management from `.env` file |
+| `interactive_helpers.py` | Shared prompt helpers for interactive mode |
+| `log_config.py` | Logging configuration and log functions |
+| `log_formatter.py` | Structured log formatting (sections, headers, progress) |
+
+### Conversion Database
+
+The system maintains a conversion history database (`data/conversion_db.json`) to:
+- Track successfully converted files
+- Prevent duplicate conversions
+- Enable smart skipping of already-converted files
 
 🛡️ Safety Guidelines
 
