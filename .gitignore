@@ -16,6 +16,7 @@ ENV/
 *.swp
 *.swo
 *~
+.qwen/
 
 # OS
 .DS_Store
@@ -30,3 +31,21 @@ Thumbs.db
 build/
 dist/
 *.egg-info/
+
+# Environment (secrets)
+.env
+.env.local
+.env.*.local
+
+# Runtime data
+data/
+logs/
+scripts/logs/
+
+# Scripts
+install-global.sh
+media-converter
+
+# Backup files
+*.bak
+*.backup
