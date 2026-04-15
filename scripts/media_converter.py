@@ -1878,7 +1878,10 @@ Video resizing:
     args = parser.parse_args()
 
     # Ensure JPEG is the real default when no explicit image format is provided.
-    # This keeps behavior aligned with project expectations.
+    # This is defensive: if PNG was somehow set as default (e.g., via config file)
+    # and the user did not explicitly pass --image-format, we override to JPEG.
+    # With the argparse default='JPEG', this condition is rarely triggered,
+    # but it ensures the intended default is always used unless explicitly overridden.
     if args.image_format.upper() == 'PNG' and not any(['--image-format' in arg for arg in sys.argv]):
         args.image_format = 'JPEG'
         log_message('INFO', "Using JPEG as default image format (95% quality)")
