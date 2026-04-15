@@ -1877,20 +1877,9 @@ Video resizing:
 
     args = parser.parse_args()
 
-    # Ensure JPEG is the real default when no explicit image format is provided.
-    # This is defensive: if PNG was somehow set as default (e.g., via config file)
-    # and the user did not explicitly pass --image-format, we override to JPEG.
-    # With the argparse default='JPEG', this condition is rarely triggered,
-    # but it ensures the intended default is always used unless explicitly overridden.
-    if args.image_format.upper() == 'PNG' and not any(['--image-format' in arg for arg in sys.argv]):
-        args.image_format = 'JPEG'
-        log_message('INFO', "Using JPEG as default image format (95% quality)")
-
-    # Ensure H.264 is the real default when no explicit video codec is provided.
-    if args.video_codec == 'h265' and not any(['--video-codec' in arg for arg in sys.argv]):
-        args.video_codec = 'h264'
-        log_message(
-            'INFO', "Using H.264 as default video codec (maximum compatibility)")
+    # Note: argparse defaults (JPEG for images, h264 for video) are applied automatically.
+    # No manual override needed - if user passes --image-format or --video-codec,
+    # argparse uses those values; otherwise, defaults are used.
 
     # If install, run and exit
     if args.install:
