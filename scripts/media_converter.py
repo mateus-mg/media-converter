@@ -991,8 +991,9 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto', 
     # Determine optimal preset based on hardware, resolution, and content
     # (function moved to module scope for clarity and reusability)
 
-    # Check aspect ratio
-    is_16_9 = is_16_9_aspect(width, height)
+    # Check aspect ratio using effective dimensions (considering rotation)
+    effective_width, effective_height = get_effective_dimensions(width, height, rotation)
+    is_16_9 = is_16_9_aspect(effective_width, effective_height)
     output_height = _estimate_output_height(height, resize)
     optimal_preset = get_optimal_preset(
         hw_accel, output_height, is_16_9, codec)
