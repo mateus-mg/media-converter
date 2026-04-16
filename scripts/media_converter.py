@@ -966,7 +966,8 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto', 
     scale_filter = []
     if resize != 'none' and resize != '4k':
         # Check if video is 16:9
-        is_16_9 = is_16_9_aspect(width, height)
+        effective_width, effective_height = get_effective_dimensions(width, height, rotation)
+        is_16_9 = is_16_9_aspect(effective_width, effective_height)
 
         if resize in ['2k', '1440p']:
             target_width = 2560
@@ -977,18 +978,9 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto', 
 
         # Only resize if the video is LARGER than the target
         if height > target_height:
-            if is_16_9:
-                # Force exact resolution for 16:9 videos
-                scale_filter = [
-                    '-vf', f'scale={target_width}:{target_height}:flags=lanczos']
-                log_message(
-                    'INFO', f"  Resizing: {width}x{height} → {target_width}x{target_height} (16:9)")
-            else:
-                # Keep aspect ratio for non-16:9 videos
-                scale_filter = [
-                    '-vf', f'scale=-2:{target_height}:flags=lanczos,scale=trunc(iw/2)*2:trunc(ih/2)*2']
-                log_message(
-                    'INFO', f"  Resizing: {width}x{height} → height {target_height}px (keeping aspect ratio)")
+            # Universal aspect ratio preservation - all videos use same scaling logic
+            scale_filter = ['-vf', f'scale=-2:{target_height}:flags=lanczos,scale=trunc(iw/2)*2:trunc(ih/2)*2']
+            log_message('INFO', f"  Resizing: {effective_width}x{effective_height} → height {target_height}px (preserving aspect ratio)")
         else:
             log_message(
                 'INFO', f"  Keeping original resolution: {width}x{height} (already ≤ {target_height}px)")
