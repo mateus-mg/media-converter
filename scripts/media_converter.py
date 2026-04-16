@@ -950,6 +950,17 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto', 
         if resize == 'none':
             log_message(
                 'INFO', f"  Tip: use --resize 2k to speed up conversion (approx 3-4x)")
+    # Detect rotation from video side_data (important for phone videos)
+    rotation = 0
+    if video_info and 'streams' in video_info:
+        for stream in video_info['streams']:
+            if stream.get('codec_type') == 'video':
+                side_data_list = stream.get('side_data_list', [])
+                for side in side_data_list:
+                    if 'rotation' in side:
+                        rotation = float(side['rotation'])
+                        break
+                break
 
     # Determine output resolution
     scale_filter = []
@@ -1085,17 +1096,6 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto', 
     else:
         audio_codec = ['-c:a', 'aac', '-b:a', '256k', '-ar', '48000']
 
-    # Detect rotation from video side_data (important for phone videos)
-    rotation = 0
-    if video_info and 'streams' in video_info:
-        for stream in video_info['streams']:
-            if stream.get('codec_type') == 'video':
-                side_data_list = stream.get('side_data_list', [])
-                for side in side_data_list:
-                    if 'rotation' in side:
-                        rotation = float(side['rotation'])
-                        break
-                break
 
     # Build transpose filter based on rotation metadata
     transpose_filter_str = None
