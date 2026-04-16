@@ -430,6 +430,17 @@ def is_16_9_aspect(width: int, height: int) -> bool:
     return abs(aspect_ratio - (16/9)) < 0.01
 
 
+def get_effective_dimensions(width: int, height: int, rotation: float) -> Tuple[int, int]:
+    """Retorna dimensões efetivas considerando rotação.
+
+    Vídeos de celular filmados em retrato têm rotação=90° mas dimensões brutas em paisagem.
+    Esta função corrige as dimensões para refletir a orientação real de exibição.
+    """
+    if abs(rotation) in (90, 270):
+        return height, width
+    return width, height
+
+
 def preserve_metadata(source: Path, destination: Path) -> None:
     """Preserve modification date from the original file"""
     try:
