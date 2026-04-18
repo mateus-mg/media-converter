@@ -170,10 +170,13 @@ Video Conversion
     ✅ Converts only MOV/MP4 videos with H.265/HEVC codec to H.264 (other codecs are skipped)
     ✅ Hardware acceleration: Auto-detects NVIDIA NVENC, Intel QSV, Software (dynamic detection)
     ✅ 10-bit support: Uses High 10 Profile for 10-bit sources (software encoder)
+    ✅ DOVI (Dolby Vision) support: Auto-detects and handles DOVI content (uses NVENC or software)
     ✅ Bitrate-aware quality: Auto CRF based on source bitrate: <10Mbps→18-19, 10-25Mbps→20-21, 25-50Mbps→22-23, >50Mbps→23-24
     ✅ Smart resizing: Never upscales, maintains aspect ratio
     ✅ Faststart: Enables web streaming compatibility
     ✅ Metadata preservation: Copies creation/modification dates
+    ✅ Output validation: Verifies codec, resolution and duration after conversion
+    ✅ Optional audio handling: Videos without audio are processed correctly
     ✅ Output file: If input is already .mp4, output will be named with _converted suffix to avoid overwriting
 
 Preset & Quality Logic
@@ -259,9 +262,12 @@ HEIC/HEIF Images:
 H.265/HEVC Videos:
     Dynamic hardware detection → NVIDIA NVENC > Intel QSV > Software
     10-bit sources force Software encoder (High 10 Profile)
+    DOVI (Dolby Vision) detected: uses NVENC if available, else software
     Detect codec via ffprobe (not by extension)
     Only MOV/MP4 with H.265/HEVC are converted
     Auto CRF based on source bitrate, preset based on hardware type
+    Output validation: verifies codec, resolution, duration after conversion
+    Videos without audio are processed correctly (no audio codec error)
     Output file: If input is .mp4, output will be named with _converted suffix
     H.264 output for maximum compatibility
 
