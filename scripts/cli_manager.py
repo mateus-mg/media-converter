@@ -337,10 +337,10 @@ class CLIManager:
                 caps['encoder'] = 'Intel Quick Sync Video'
                 caps['supported_formats'] = 'h264, hevc, vp9'
                 caps['presets'] = 'veryfast, faster, fast, medium, slow, slower, veryslow'
-            elif hw_accel == 'vaapi':
-                caps['encoder'] = 'Video Acceleration API'
-                caps['supported_formats'] = 'h264, hevc'
-                caps['presets'] = 'varies by hardware'
+            else:
+                caps['encoder'] = 'Software (libx264/libx265)'
+                caps['supported_formats'] = 'all'
+                caps['presets'] = 'ultrafast to veryslow'
 
         except Exception as e:
             log_error(self.logger, f"Error getting hardware capabilities: {e}")
