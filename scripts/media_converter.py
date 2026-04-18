@@ -46,7 +46,7 @@ def _run_command(cmd: List[str], timeout: int = 10) -> str:
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         return result.stdout.strip() if result.returncode == 0 else ''
-    except:
+    except (subprocess.TimeoutExpired, OSError, ValueError):
         return ''
 
 def detect_cpu_model() -> str:
@@ -451,7 +451,7 @@ def _test_encoder(encoder: str) -> bool:
             capture_output=True, timeout=10
         )
         return result.returncode == 0
-    except:
+    except (subprocess.TimeoutExpired, OSError, ValueError):
         return False
 
 
@@ -901,6 +901,54 @@ def _parse_ffprobe_int(value: Optional[str]) -> int:
         return 0
 
 
+def _validate_output_video(output_info: Dict, expected_width: int, expected_height: int, expected_codec: str) -> bool:
+    """Validate that output video has expected properties."""
+    if not output_info or 'streams' not in output_info:
+        return False
+
+    # Find video stream
+    video_stream = None
+    for stream in output_info['streams']:
+        if stream.get('codec_type') == 'video':
+            video_stream = stream
+            break
+
+    if not video_stream:
+        log_message('WARN', "  No video stream found in output")
+        return False
+
+    # Check codec
+    output_codec = video_stream.get('codec_name', '')
+    if expected_codec == 'h264' and output_codec != 'h264':
+        log_message('WARN', f"  Output codec mismatch: expected h264, got {output_codec}")
+        return False
+    elif expected_codec == 'h265' and output_codec != 'hevc':
+        log_message('WARN', f"  Output codec mismatch: expected hevc, got {output_codec}")
+        return False
+
+    # Check resolution (allow small tolerance for crop/scale variations)
+    out_width = video_stream.get('width', 0)
+    out_height = video_stream.get('height', 0)
+    if out_width == 0 or out_height == 0:
+        log_message('WARN', "  Invalid output resolution")
+        return False
+
+    # Allow 1% tolerance for resolution differences (handles rounding)
+    width_tolerance = max(1, int(expected_width * 0.01))
+    height_tolerance = max(1, int(expected_height * 0.01))
+    if abs(out_width - expected_width) > width_tolerance or abs(out_height - expected_height) > height_tolerance:
+        log_message('WARN', f"  Output resolution mismatch: expected {expected_width}x{expected_height}, got {out_width}x{out_height}")
+        return False
+
+    # Check duration
+    duration = float(output_info.get('format', {}).get('duration', 0))
+    if duration <= 0:
+        log_message('WARN', "  Invalid output duration")
+        return False
+
+    return True
+
+
 def _adjust_preset_step(hw_type: str, current_preset: str, step: int) -> str:
     """Move preset faster/slower by step while preserving encoder-compatible names."""
     if step == 0:
@@ -1057,8 +1105,8 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto') 
 
     Quality options:
     - auto: Adaptive CRF by resolution (recommended)
-    - lossless: Lossless (very large files)
-    - high: CRF 18 (visually lossless)
+    - lossless: H265 truly lossless, H264 uses CRF 18 (very large files)
+    - high: CRF 18 (visually lossless, recommended)
     - medium: CRF 23 (good quality)
     """
     output_path = input_path.with_suffix('.mp4')
@@ -1363,6 +1411,13 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto') 
     elapsed_time = time.time() - start_time
 
     if result.returncode == 0 and output_path.exists() and output_path.stat().st_size > 0:
+        # Validate output video properties
+        output_info = get_video_info(output_path)
+        if not _validate_output_video(output_info, width, height, codec):
+            log_message('ERROR', f"  Output validation failed: codec={codec}, expected resolution {width}x{height}")
+            output_path.unlink()
+            return False, input_path
+
         preserve_metadata(input_path, output_path)
 
         # Show size comparison
@@ -1985,7 +2040,7 @@ Video codecs:
 
 Video quality:
     auto     - Adaptive by resolution (recommended)
-    lossless - Lossless (very large files)
+    lossless - H265 truly lossless, H264 uses CRF 18 (very large files)
     high     - CRF 18, visually lossless (recommended)
     medium   - CRF 23, good quality, smaller files
 
@@ -2192,7 +2247,7 @@ Video resizing:
 
     quality_desc = {
         'auto': 'adaptive by resolution (recommended)',
-        'lossless': 'truly lossless (very large files)',
+        'lossless': 'H265 truly lossless, H264 uses CRF 18 (very large files)',
         'high': 'CRF 18 - visually lossless (recommended)',
         'medium': 'CRF 23 - good quality, smaller size'
     }
