@@ -91,3 +91,4 @@ credentials.json
 service_account.json
 *.credentials
 *.secret
+.worktrees/
