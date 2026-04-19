@@ -49,3 +49,15 @@ media-converter
 # Backup files
 *.bak
 *.backup
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# Reports
+*.report
+suspicious_videos_report.txt
+
+# Internal documentation/plans (for agents)
+docs/superpowers/

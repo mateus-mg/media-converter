@@ -5,7 +5,8 @@ Converts HEIC/HEIF images to JPEG 95% (or PNG) and H.265/HEVC videos to H.264 (m
 Compatible with files from smartphones, GoPro, and other devices.
 """
 
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Optional, Dict, List, Tuple
 import os
 import sys
 import subprocess
@@ -15,7 +16,135 @@ from typing import Dict, List, Tuple
 import argparse
 import logging
 
-_hw_accel_cached = None
+@dataclass
+class NvidiaGPU:
+    name: str
+    memory_mb: int
+    driver: str
+    supports_10bit: bool
+
+@dataclass
+class IntelGPU:
+    name: str
+    supports_qsv: bool
+
+@dataclass
+class HardwareInfo:
+    cpu_model: str
+    cpu_cores: int
+    gpu_nvidia: Optional[NvidiaGPU]
+    gpu_intel: Optional[IntelGPU]
+    available_encoders: List[str]
+    best_for_8bit: str = 'software'
+    best_for_10bit: str = 'software'
+
+_hw_info_cached: Optional[HardwareInfo] = None
+
+
+def _run_command(cmd: List[str], timeout: int = 10) -> str:
+    """Run a command and return stdout, or empty string on failure"""
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return result.stdout.strip() if result.returncode == 0 else ''
+    except (subprocess.TimeoutExpired, OSError, ValueError):
+        return ''
+
+def detect_cpu_model() -> str:
+    """Detect CPU model name"""
+    output = _run_command(["sh", "-c", "cat /proc/cpuinfo | grep 'model name' | head -1 | cut -d: -f2"])
+    return output.strip() if output else "Unknown"
+
+def detect_cpu_cores() -> int:
+    """Detect number of CPU cores"""
+    return os.cpu_count() or 1
+
+def detect_nvidia_gpu() -> Optional[NvidiaGPU]:
+    """Detect NVIDIA GPU using nvidia-smi"""
+    output = _run_command(["nvidia-smi", "--query-gpu=name,memory.total,driver_version", "--format=csv,noheader"])
+    if not output:
+        return None
+    
+    parts = [p.strip() for p in output.split(',')]
+    if len(parts) < 3:
+        return None
+    
+    name = parts[0]
+    memory_mb = int(parts[1].replace(' MB', ''))
+    driver = parts[2]
+    
+    supports_10bit = True
+    if '940MX' in name or 'GTX 9' in name or 'GTX 10' in name:
+        supports_10bit = False
+    
+    return NvidiaGPU(name=name, memory_mb=memory_mb, driver=driver, supports_10bit=supports_10bit)
+
+def detect_intel_gpu() -> Optional[IntelGPU]:
+    """Detect Intel integrated GPU using lspci"""
+    output = _run_command(["lspci"])
+    if not output:
+        return None
+    
+    for line in output.split('\n'):
+        if 'Intel' in line and ('VGA' in line or 'Display' in line or '3D' in line):
+            if 'UHD' in line:
+                return IntelGPU(name='UHD Graphics', supports_qsv=True)
+            elif 'HD Graphics' in line:
+                return IntelGPU(name='HD Graphics', supports_qsv=True)
+            elif 'Iris' in line:
+                return IntelGPU(name='Iris Graphics', supports_qsv=True)
+    
+    return None
+
+def detect_ffmpeg_encoders() -> List[str]:
+    """Detect available FFmpeg encoders"""
+    output = _run_command(['ffmpeg', '-hide_banner', '-encoders'])
+    if not output:
+        return []
+    
+    encoders = []
+    for line in output.split('\n'):
+        if 'V.....' in line:
+            parts = line.split()
+            if len(parts) >= 2:
+                encoder = parts[1].strip()
+                if encoder.startswith('h264_') or encoder.startswith('hevc_') or encoder == 'libx264' or encoder == 'libx265':
+                    encoders.append(encoder)
+    return encoders
+
+def select_best_8bit_encoder(hw: HardwareInfo) -> str:
+    """Select best encoder for 8-bit video"""
+    if 'h264_nvenc' in hw.available_encoders and hw.gpu_nvidia:
+        return 'nvenc'
+    if 'h264_qsv' in hw.available_encoders and hw.gpu_intel:
+        return 'qsv'
+    return 'software'
+
+def select_best_10bit_encoder(hw: HardwareInfo) -> str:
+    """Select best encoder for 10-bit video"""
+    if 'h264_qsv' in hw.available_encoders and hw.gpu_intel:
+        return 'qsv'
+    return 'software'
+
+def detect_full_hardware() -> HardwareInfo:
+    """Detect all hardware and return complete HardwareInfo"""
+    global _hw_info_cached
+    
+    if _hw_info_cached is not None:
+        return _hw_info_cached
+    
+    hw = HardwareInfo(
+        cpu_model=detect_cpu_model(),
+        cpu_cores=detect_cpu_cores(),
+        gpu_nvidia=detect_nvidia_gpu(),
+        gpu_intel=detect_intel_gpu(),
+        available_encoders=detect_ffmpeg_encoders(),
+    )
+    
+    hw.best_for_8bit = select_best_8bit_encoder(hw)
+    hw.best_for_10bit = select_best_10bit_encoder(hw)
+    
+    _hw_info_cached = hw
+    return hw
 
 
 def send_to_trash(file_path: Path) -> bool:
@@ -158,6 +287,36 @@ def log_message(level: str, msg: str) -> None:
         _LOGGER.log(log_level, payload, stacklevel=2)
 
 
+def log_hardware_info(hw: HardwareInfo) -> None:
+    """Log detailed hardware information"""
+    log_message('INFO', "═" * 60)
+    log_message('INFO', "HARDWARE DETECTION COMPLETE")
+    log_message('INFO', "═" * 60)
+    log_message('INFO', f"CPU: {hw.cpu_model} ({hw.cpu_cores} cores)")
+    
+    if hw.gpu_nvidia:
+        n = hw.gpu_nvidia
+        nvenc_10bit = "YES" if n.supports_10bit else "NO"
+        log_message('INFO', f"GPU-1 (Dedicated): {n.name} ({n.memory_mb}MB, Driver {n.driver})")
+        log_message('INFO', f"  └─ NVENC: Available (10-bit H264: {nvenc_10bit})")
+    else:
+        log_message('INFO', "GPU-1 (Dedicated): None")
+    
+    if hw.gpu_intel:
+        log_message('INFO', f"GPU-2 (Integrated): {hw.gpu_intel.name}")
+        log_message('INFO', f"  └─ QSV: Available")
+    else:
+        log_message('INFO', "GPU-2 (Integrated): None")
+    
+    encoders_str = ', '.join(hw.available_encoders) if hw.available_encoders else 'None'
+    log_message('INFO', f"FFmpeg Encoders: {encoders_str}")
+    log_message('INFO', "─" * 60)
+    log_message('INFO', "DECISION:")
+    log_message('INFO', f"  8-bit video:  {hw.best_for_8bit.upper()}")
+    log_message('INFO', f"  10-bit video: {hw.best_for_10bit.upper()}")
+    log_message('INFO', "═" * 60)
+
+
 def _log_stage(cycle_label: str, stage: str) -> None:
     """Log a stage block using the same style as media-organizer."""
     log_message('INFO', '')
@@ -245,7 +404,8 @@ def check_dependencies() -> bool:
 
 
 def check_hardware_acceleration() -> str:
-    """Detect hardware acceleration support"""
+    """Detect hardware acceleration support - prefers dedicated GPU (NVENC) over integrated (QSV)
+    Only returns acceleration types that actually work (tested via encoding)"""
     log_message('INFO', "Checking for hardware acceleration support...")
     try:
         result = subprocess.run(
@@ -256,16 +416,22 @@ def check_hardware_acceleration() -> str:
         )
         encoders = result.stdout
 
-        if 'h264_qsv' in encoders:
-            log_message('SUCCESS', "Intel Quick Sync (QSV) detected.")
-            return 'qsv'
+        # Test NVENC first (dedicated GPU - best performance)
         if 'h264_nvenc' in encoders:
-            log_message('SUCCESS', "NVIDIA NVENC detected.")
-            return 'nvenc'
-        if 'h264_vaapi' in encoders:
-            log_message(
-                'SUCCESS', "VAAPI (generic hardware acceleration) detected.")
-            return 'vaapi'
+            if _test_encoder('h264_nvenc'):
+                log_message('SUCCESS', "NVIDIA NVENC detected (dedicated GPU - best performance).")
+                return 'nvenc'
+            else:
+                log_message('INFO', "NVIDIA NVENC available but not working (no GPU?)")
+
+        # Test QSV (integrated GPU)
+        if 'h264_qsv' in encoders:
+            if _test_encoder('h264_qsv'):
+                log_message('SUCCESS', "Intel Quick Sync (QSV) detected (integrated GPU).")
+                return 'qsv'
+            else:
+                log_message('INFO', "Intel Quick Sync (QSV) available but not working")
+
     except subprocess.TimeoutExpired:
         log_message('WARN', "Hardware acceleration check timed out.")
     except Exception as e:
@@ -276,12 +442,30 @@ def check_hardware_acceleration() -> str:
     return 'none'
 
 
+def _test_encoder(encoder: str) -> bool:
+    """Test if an encoder actually works by attempting a minimal encode"""
+    try:
+        result = subprocess.run(
+            ['ffmpeg', '-y', '-f', 'lavfi', '-i', 'testsrc=duration=0.1:size=16x16',
+             '-c:v', encoder, '-preset', 'ultrafast', '-frames:v', '1', '-f', 'null', '-'],
+            capture_output=True, timeout=10
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError, ValueError):
+        return False
+
+
 def get_hardware_acceleration() -> str:
     """Returns hardware acceleration with caching (doesn't change during session)."""
     global _hw_accel_cached
     if _hw_accel_cached is None:
         _hw_accel_cached = check_hardware_acceleration()
     return _hw_accel_cached
+
+
+def check_nvenc_available() -> bool:
+    """Check if NVENC is actually working (not just available)"""
+    return _test_encoder('h264_nvenc')
 
 
 def count_files(directory: Path, filters: Optional[List[str]] = None, only_images: bool = False, only_videos: bool = False) -> Dict[str, int]:
@@ -428,6 +612,17 @@ def is_16_9_aspect(width: int, height: int) -> bool:
     aspect_ratio = width / height
     # 16:9 = 1.777... (tolerance of 0.01)
     return abs(aspect_ratio - (16/9)) < 0.01
+
+
+def get_effective_dimensions(width: int, height: int, rotation: float) -> Tuple[int, int]:
+    """Retorna dimensões efetivas considerando rotação.
+
+    Vídeos de celular filmados em retrato têm rotação=90° mas dimensões brutas em paisagem.
+    Esta função corrige as dimensões para refletir a orientação real de exibição.
+    """
+    if abs(rotation) in (90, 270):
+        return height, width
+    return width, height
 
 
 def preserve_metadata(source: Path, destination: Path) -> None:
@@ -650,10 +845,11 @@ def get_optimal_preset(hw_type: str, resolution_height: int, is_16_9: bool, code
         else:
             return 'slower'
     else:
+        # Software encoding - prefer slower presets for better compression
         if resolution_height >= 2160:
-            return 'fast' if is_16_9 else 'medium'
+            return 'slow' if is_16_9 else 'medium'
         elif resolution_height >= 1440:
-            return 'medium' if is_16_9 else 'slow'
+            return 'slow' if is_16_9 else 'slower'
         else:
             return 'slow' if is_16_9 else 'slower'
 
@@ -705,14 +901,52 @@ def _parse_ffprobe_int(value: Optional[str]) -> int:
         return 0
 
 
-def _estimate_output_height(source_height: int, resize: str) -> int:
-    """Estimate output height used by encoder decision logic."""
-    resize_mode = str(resize).lower()
-    if resize_mode == '1080p':
-        return min(source_height, 1080)
-    if resize_mode in {'2k', '1440p'}:
-        return min(source_height, 1440)
-    return source_height
+def _validate_output_video(output_info: Dict, expected_width: int, expected_height: int, expected_codec: str) -> bool:
+    """Validate that output video has expected properties."""
+    if not output_info or 'streams' not in output_info:
+        return False
+
+    # Find video stream
+    video_stream = None
+    for stream in output_info['streams']:
+        if stream.get('codec_type') == 'video':
+            video_stream = stream
+            break
+
+    if not video_stream:
+        log_message('WARN', "  No video stream found in output")
+        return False
+
+    # Check codec
+    output_codec = video_stream.get('codec_name', '')
+    if expected_codec == 'h264' and output_codec != 'h264':
+        log_message('WARN', f"  Output codec mismatch: expected h264, got {output_codec}")
+        return False
+    elif expected_codec == 'h265' and output_codec != 'hevc':
+        log_message('WARN', f"  Output codec mismatch: expected hevc, got {output_codec}")
+        return False
+
+    # Check resolution (allow small tolerance for crop/scale variations)
+    out_width = video_stream.get('width', 0)
+    out_height = video_stream.get('height', 0)
+    if out_width == 0 or out_height == 0:
+        log_message('WARN', "  Invalid output resolution")
+        return False
+
+    # Allow 1% tolerance for resolution differences (handles rounding)
+    width_tolerance = max(1, int(expected_width * 0.01))
+    height_tolerance = max(1, int(expected_height * 0.01))
+    if abs(out_width - expected_width) > width_tolerance or abs(out_height - expected_height) > height_tolerance:
+        log_message('WARN', f"  Output resolution mismatch: expected {expected_width}x{expected_height}, got {out_width}x{out_height}")
+        return False
+
+    # Check duration
+    duration = float(output_info.get('format', {}).get('duration', 0))
+    if duration <= 0:
+        log_message('WARN', "  Invalid output duration")
+        return False
+
+    return True
 
 
 def _adjust_preset_step(hw_type: str, current_preset: str, step: int) -> str:
@@ -745,58 +979,72 @@ def _determine_auto_crf_and_preset(
     is_16_9: bool,
     pixel_format: str,
 ) -> Tuple[str, str, List[str]]:
-    """Return adaptive CRF and preset tuned for quality/time balance."""
+    """Return adaptive CRF and preset tuned for quality/size balance.
+    
+    CRF rules based on source bitrate (per user discussion):
+    - < 10 Mbps: CRF 18-19 (low bitrate source, preserve details)
+    - 10-25 Mbps: CRF 20-21 (balanced)
+    - 25-50 Mbps: CRF 22-23 (higher bitrate, control size)
+    - > 50 Mbps: CRF 23-24 (very high bitrate, prioritize size control)
+    """
     reasons: List[str] = []
 
-    # Base CRF by output resolution (targeting visually lossless quality)
-    if output_height >= 2160:
-        crf = 22
-        reasons.append('base_crf=22_for_4k')
-    elif output_height >= 1440:
-        crf = 20
-        reasons.append('base_crf=20_for_2k')
-    else:
+    # Base CRF by SOURCE BITRATE (targeting ~150-200% output size with good quality)
+    if bitrate_mbps < 10.0:
         crf = 18
-        reasons.append('base_crf=18_for_1080p_or_lower')
+        reasons.append('low_bitrate_preserve_details')
+    elif bitrate_mbps < 25.0:
+        crf = 20
+        reasons.append('medium_bitrate_balanced')
+    elif bitrate_mbps < 50.0:
+        crf = 22
+        reasons.append('high_bitrate_control_size')
+    else:
+        crf = 23
+        reasons.append('very_high_bitrate_size_priority')
+
+    # Adjust for resolution (higher res can use slightly more aggressive CRF)
+    if output_height >= 2160:
+        crf += 1
+        reasons.append('4k_relax_crf')
+    elif output_height <= 720:
+        crf -= 1
+        reasons.append('720p_preserve_more')
 
     # Content complexity adjustments
     if fps >= 50.0:
         crf -= 1
-        reasons.append('high_fps_keep_detail')
+        reasons.append('high_fps_preserve_detail')
     elif fps > 0 and fps <= 24.5 and bitrate_mbps <= 6.0:
         crf += 1
-        reasons.append('low_motion_allow_small_crf_relax')
+        reasons.append('low_motion_allow_relax')
 
-    if bitrate_mbps >= 28.0:
-        crf -= 1
-        reasons.append('high_bitrate_source_preserve_texture')
-    elif bitrate_mbps > 0 and bitrate_mbps <= 5.0 and output_height <= 1080:
-        crf += 1
-        reasons.append('low_bitrate_source_avoid_overspending_bits')
-
+    # 10-bit source protection
     if '10' in pixel_format or 'p010' in pixel_format:
         crf -= 1
-        reasons.append('10bit_source_protect_gradients')
+        reasons.append('10bit_protect_gradients')
 
-    crf = max(17, min(23, crf))
+    # Clamp CRF to valid range
+    crf = max(17, min(24, crf))
 
-    # Preset tuning: keep speed-first baseline and only move when needed
+    # Preset tuning: prefer 'slow' for software encoding (better compression)
     preset_step = 0
-    if fps >= 50.0 or bitrate_mbps >= 28.0:
+    if hw_type == 'none' or hw_type == 'software':
+        # Software encoding - use slower preset for better compression
+        preset_step = 1  # Move one step slower
+        reasons.append('software_slower_preset')
+    
+    if fps >= 50.0 or bitrate_mbps >= 50.0:
         preset_step += 1
-        reasons.append('complex_content_one_step_slower')
-    elif fps > 0 and fps <= 24.5 and bitrate_mbps > 0 and bitrate_mbps <= 5.0:
+        reasons.append('complex_content_slower')
+    elif fps > 0 and fps <= 24.5 and bitrate_mbps <= 10.0:
         preset_step -= 1
-        reasons.append('simple_content_one_step_faster')
+        reasons.append('simple_content_faster')
 
-    if not is_16_9 and output_height <= 1080:
-        preset_step += 1
-        reasons.append('non_16_9_small_frame_one_step_slower')
-
-    # Keep upper bound for very large outputs to avoid large time penalties
+    # Keep upper bound for very large outputs
     if output_height >= 2160 and preset_step > 0:
-        preset_step = 0
-        reasons.append('4k_time_guard_keep_base_preset')
+        preset_step = min(preset_step, 1)  # Limit slowdown for 4K
+        reasons.append('4k_time_guard')
 
     tuned_preset = _adjust_preset_step(hw_type, base_preset, preset_step)
     return str(crf), tuned_preset, reasons
@@ -846,7 +1094,7 @@ def _summarize_auto_factors(reasons: List[str]) -> str:
     return ', '.join(ranked[:3])
 
 
-def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto', resize: str = 'none') -> Tuple[bool, Path]:
+def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto') -> Tuple[bool, Path]:
     """
     Converts video with maximum quality preserved
 
@@ -857,8 +1105,8 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto', 
 
     Quality options:
     - auto: Adaptive CRF by resolution (recommended)
-    - lossless: Lossless (very large files)
-    - high: CRF 18 (visually lossless)
+    - lossless: H265 truly lossless, H264 uses CRF 18 (very large files)
+    - high: CRF 18 (visually lossless, recommended)
     - medium: CRF 23 (good quality)
     """
     output_path = input_path.with_suffix('.mp4')
@@ -883,6 +1131,7 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto', 
     height = 0
     duration = 0
     has_video_stream = False
+    has_audio_stream = False
     source_codec_name = None
     source_fps = 0.0
     source_pixel_format = 'unknown'
@@ -903,7 +1152,8 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto', 
                 stream_bitrate = _parse_ffprobe_int(stream.get('bit_rate'))
                 if stream_bitrate > 0:
                     source_bitrate_mbps = stream_bitrate / 1_000_000.0
-                break
+            elif stream.get('codec_type') == 'audio':
+                has_audio_stream = True
         if 'format' in video_info:
             duration = float(video_info['format'].get('duration', 0))
             if source_bitrate_mbps <= 0:
@@ -933,55 +1183,71 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto', 
     if height >= 2160:
         file_size = input_path.stat().st_size / (1024 * 1024)
         log_message(
-            'WARN', f"  4K video detected ({width}x{height}) — size: {file_size:.1f} MB")
+'WARN', f"  4K video detected ({width}x{height}) — size: {file_size:.1f} MB")
         log_message(
-            'WARN', f"  Estimated time: {duration * 0.5:.0f}-{duration * 1:.0f} minutes")
-        if resize == 'none':
-            log_message(
-                'INFO', f"  Tip: use --resize 2k to speed up conversion (approx 3-4x)")
+            'WARN', f"  Estimated time: {duration * 0.5:.0f}-{duration * 1.0:.0f} minutes")
+    # Detect rotation from video side_data (important for phone videos)
+    rotation = 0
+    if video_info and 'streams' in video_info:
+        for stream in video_info['streams']:
+            if stream.get('codec_type') == 'video':
+                side_data_list = stream.get('side_data_list', [])
+                for side in side_data_list:
+                    if 'rotation' in side:
+                        rotation = float(side['rotation'])
+                        break
+                break
 
-    # Determine output resolution
-    scale_filter = []
-    if resize != 'none' and resize != '4k':
-        # Check if video is 16:9
-        is_16_9 = is_16_9_aspect(width, height)
+    # Detect hardware acceleration using full detection
+    hw_info = detect_full_hardware()
+    
+    # Check if source is 10-bit
+    is_10bit = '10le' in source_pixel_format or 'p010' in source_pixel_format
+    
+    # Select appropriate encoder based on bit depth
+    if is_10bit:
+        hw_accel = hw_info.best_for_10bit
+        # QSV doesn't support 10-bit H264 output properly - force software
+        if hw_accel == 'qsv':
+            log_message('WARN', f"  QSV does not support 10-bit H264 output, using software encoder")
+            hw_accel = 'software'
+        elif hw_info.gpu_nvidia and not hw_info.gpu_nvidia.supports_10bit and hw_accel == 'nvenc':
+            log_message('WARN', f"  NVIDIA {hw_info.gpu_nvidia.name} does not support 10-bit H264, using software")
+            hw_accel = 'software'
+    else:
+        hw_accel = hw_info.best_for_8bit
 
-        if resize in ['2k', '1440p']:
-            target_width = 2560
-            target_height = 1440
-        else:  # 1080p
-            target_width = 1920
-            target_height = 1080
+    log_message('INFO', f"  Source: {source_pixel_format} | 10-bit: {is_10bit} | Encoder: {hw_accel}")
 
-        # Only resize if the video is LARGER than the target
-        if height > target_height:
-            if is_16_9:
-                # Force exact resolution for 16:9 videos
-                scale_filter = [
-                    '-vf', f'scale={target_width}:{target_height}:flags=lanczos']
-                log_message(
-                    'INFO', f"  Resizing: {width}x{height} → {target_width}x{target_height} (16:9)")
+    # Check for DOVI (Dolby Vision) - QSV doesn't handle DOVI well with rotation
+    has_dovi = False
+    if video_info and 'streams' in video_info:
+        for stream in video_info['streams']:
+            if stream.get('codec_type') == 'video':
+                for side in stream.get('side_data_list', []):
+                    if side.get('side_data_type') == 'DOVI configuration record':
+                        has_dovi = True
+                        break
+                break
+
+    # Force software encoding for DOVI videos only if no hardware acceleration is available
+    # NVENC handles DOVI better than QSV, so only fallback to software if no nvenc
+    if has_dovi:
+        if hw_accel == 'qsv':
+            if check_nvenc_available():
+                log_message('WARN', f"  DOVI detected - switching from QSV to NVENC for DOVI compatibility")
+                hw_accel = 'nvenc'
             else:
-                # Keep aspect ratio for non-16:9 videos
-                scale_filter = [
-                    '-vf', f'scale=-2:{target_height}:flags=lanczos,scale=trunc(iw/2)*2:trunc(ih/2)*2']
-                log_message(
-                    'INFO', f"  Resizing: {width}x{height} → height {target_height}px (keeping aspect ratio)")
-        else:
-            log_message(
-                'INFO', f"  Keeping original resolution: {width}x{height} (already ≤ {target_height}px)")
-
-    # Detect hardware acceleration
-    hw_accel = get_hardware_acceleration()
+                log_message('WARN', f"  DOVI detected - forcing software encoder (QSV incompatible with DOVI)")
+                hw_accel = 'none'
+        elif hw_accel == 'none':
+            log_message('WARN', f"  DOVI detected - using software encoder")
 
     # Determine optimal preset based on hardware, resolution, and content
-    # (function moved to module scope for clarity and reusability)
-
-    # Check aspect ratio
-    is_16_9 = is_16_9_aspect(width, height)
-    output_height = _estimate_output_height(height, resize)
+    effective_width, effective_height = get_effective_dimensions(width, height, rotation)
+    is_16_9 = is_16_9_aspect(effective_width, effective_height)
     optimal_preset = get_optimal_preset(
-        hw_accel, output_height, is_16_9, codec)
+        hw_accel, height, is_16_9, codec)
 
     # Resolve quality mode and CRF strategy
     quality_mode = str(quality).lower()
@@ -994,7 +1260,7 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto', 
         selected_crf, optimal_preset, auto_reasons = _determine_auto_crf_and_preset(
             hw_type=hw_accel,
             base_preset=optimal_preset,
-            output_height=output_height,
+            output_height=height,
             fps=source_fps,
             bitrate_mbps=source_bitrate_mbps,
             is_16_9=is_16_9,
@@ -1004,7 +1270,7 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto', 
         log_message(
             'INFO',
             (
-                f"  Auto tuning: out_h={output_height} | src_fps={source_fps:.2f} "
+                f"  Auto tuning: out_h={height} | src_fps={source_fps:.2f} "
                 f"| src_bitrate={source_bitrate_mbps:.2f}Mbps | pix_fmt={source_pixel_format}"
             )
         )
@@ -1020,15 +1286,36 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto', 
 
     # Configure video codec with hardware acceleration if available
     if codec == 'h264':
-        if hw_accel == 'qsv':
+        if is_10bit and (hw_accel == 'none' or hw_accel == 'software'):
+            # 10-bit software encoding (libx264 with High 10 Profile)
+            log_message(
+                'INFO', f"  Using software encoder 10-bit (preset: {optimal_preset})")
+            video_codec = [
+                '-c:v', 'libx264',
+                '-crf', selected_crf,
+                '-preset', optimal_preset,
+                '-profile:v', 'high10',  # High 10 for 10-bit
+                '-pix_fmt', 'yuv420p10le',
+                '-level', '4.1'
+            ]
+        elif hw_accel == 'qsv':
             log_message(
                 'INFO', f"  Using Intel Quick Sync Video (hardware acceleration, preset: {optimal_preset})")
-            video_codec = [
-                '-c:v', 'h264_qsv',
-                '-global_quality', selected_crf,
-                '-preset', optimal_preset,
-                '-profile:v', 'high'
-            ]
+            if is_10bit:
+                video_codec = [
+                    '-c:v', 'h264_qsv',
+                    '-global_quality', selected_crf,
+                    '-preset', optimal_preset,
+                    '-profile:v', 'high',  # QSV uses different profile naming
+                    '-pix_fmt', 'p010le' if 'p010' in source_pixel_format else 'yuv420p10le'
+                ]
+            else:
+                video_codec = [
+                    '-c:v', 'h264_qsv',
+                    '-global_quality', selected_crf,
+                    '-preset', optimal_preset,
+                    '-profile:v', 'high'
+                ]
         elif hw_accel == 'nvenc':
             log_message(
                 'INFO', f"  Using NVIDIA NVENC (hardware acceleration, preset: {optimal_preset})")
@@ -1039,8 +1326,8 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto', 
                 '-profile:v', 'high'
             ]
         elif quality_mode == 'lossless':
-            log_message('INFO', f"  Using software encoder (preset: medium)")
-            video_codec = ['-c:v', 'libx264', '-qp', '0', '-preset', 'medium']
+            log_message('INFO', f"  Using high quality encoder (CRF 18 - visually lossless)")
+            video_codec = ['-c:v', 'libx264', '-crf', '18', '-preset', 'medium', '-profile:v', 'high', '-level', '4.1']
         else:
             log_message(
                 'INFO', f"  Using software encoder (preset: {optimal_preset})")
@@ -1068,73 +1355,23 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto', 
     else:
         video_codec = ['-c:v', 'copy']
 
-    # Configure audio codec (AAC high quality)
-    if quality_mode == 'lossless':
-        audio_codec = ['-c:a', 'flac']
-    else:
-        audio_codec = ['-c:a', 'aac', '-b:a', '256k', '-ar', '48000']
+    # Configure audio codec (AAC high quality) - only if source has audio
+    audio_codec = ['-c:a', 'aac', '-b:a', '256k', '-ar', '48000'] if has_audio_stream else []
 
-    # Detect rotation from video side_data (important for phone videos)
-    rotation = 0
-    if video_info and 'streams' in video_info:
-        for stream in video_info['streams']:
-            if stream.get('codec_type') == 'video':
-                side_data_list = stream.get('side_data_list', [])
-                for side in side_data_list:
-                    if 'rotation' in side:
-                        rotation = float(side['rotation'])
-                        break
-                break
 
-    # Build transpose filter based on rotation metadata
-    transpose_filter_str = None
-    if rotation != 0:
-        # ffmpeg transpose filter values:
-        # 0 = 90° counter-clockwise + vertical flip (default)
-        # 1 = 90° clockwise
-        # 2 = 90° counter-clockwise
-        # 3 = 90° clockwise + vertical flip
-        if abs(rotation - 90) < 0.1:
-            transpose_filter_str = 'transpose=1'
-            log_message('INFO', f"  Rotation detected: {rotation}° → applying transpose=1 (90° CW)")
-        elif abs(rotation + 90) < 0.1:
-            transpose_filter_str = 'transpose=2'
-            log_message('INFO', f"  Rotation detected: {rotation}° → applying transpose=2 (90° CCW)")
-        elif abs(rotation - 180) < 0.1 or abs(rotation + 180) < 0.1:
-            transpose_filter_str = 'transpose=2,transpose=2'
-            log_message('INFO', f"  Rotation detected: {rotation}° → applying 180° rotation")
-        elif abs(rotation - 270) < 0.1 or abs(rotation + 90) < 0.1:
-            transpose_filter_str = 'transpose=2'
-            log_message('INFO', f"  Rotation detected: {rotation}° → applying transpose=2 (270° CW = 90° CCW)")
-        elif abs(abs(rotation) - 360) < 0.1:
-            log_message('INFO', f"  Rotation detected: {rotation}° → no correction needed")
-        else:
-            log_message('WARN', f"  Unusual rotation: {rotation}° → skipping correction")
-
-    # Combine scale and transpose filters into a single -vf chain
+    # Build video filters (empty - no transpose, no scale)
     video_filters = []
-    filter_parts = []
-
-    if scale_filter:
-        # scale_filter is ['-vf', 'scale=...'] — extract just the filter part
-        filter_parts.append(scale_filter[1])
-
-    if transpose_filter_str:
-        filter_parts.append(transpose_filter_str)
-
-    if filter_parts:
-        video_filters = ['-vf', ','.join(filter_parts)]
 
     # Build FFmpeg command
     cmd = [
         'ffmpeg',
+        '-noautorotate',
         '-i', str(input_path),
         '-progress', 'pipe:1',
-        # Map all streams: video, audio, subtitles, data tracks
+        # Map streams: video, audio, subtitles (skip data streams to avoid issues)
         '-map', '0:v?',
         '-map', '0:a?',
         '-map', '0:s?',
-        '-map', '0:d?',
         *video_codec,
         *video_filters,
         *audio_codec,
@@ -1142,17 +1379,13 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto', 
         # Copy all metadata: container + per-stream (creation_time, handler_name, location, GPS, etc.)
         '-map_metadata', '0',
         '-map_metadata:s:v', '0:s:v',
-        '-map_metadata:s:a', '0:s:a',
+        *(['-map_metadata:s:a', '0:s:a'] if has_audio_stream else []),
         # Copy chapters if present
         '-map_chapters', '0',
-        '-pix_fmt', 'yuv420p',
+        '-pix_fmt', 'yuv420p10le' if is_10bit else 'yuv420p',
         '-y',
         str(output_path)
     ]
-
-    # Clear rotation metadata after applying transpose filter to prevent double-rotation in players
-    if transpose_filter_str:
-        cmd.extend(['-metadata:s:v', 'rotation=0'])
 
     crf_info = 'lossless' if quality_mode == 'lossless' else selected_crf
     log_message(
@@ -1178,6 +1411,13 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto', 
     elapsed_time = time.time() - start_time
 
     if result.returncode == 0 and output_path.exists() and output_path.stat().st_size > 0:
+        # Validate output video properties
+        output_info = get_video_info(output_path)
+        if not _validate_output_video(output_info, width, height, codec):
+            log_message('ERROR', f"  Output validation failed: codec={codec}, expected resolution {width}x{height}")
+            output_path.unlink()
+            return False, input_path
+
         preserve_metadata(input_path, output_path)
 
         # Show size comparison
@@ -1212,7 +1452,6 @@ def process_directory(
     video_quality: str = 'auto',
     dry_run: bool = False,
     delete_originals: bool = False,
-    resize: str = 'none',
     only_images: bool = False,
     only_videos: bool = False,
 ) -> Tuple[Dict[str, int], List[Path], List[Path]]:
@@ -1396,7 +1635,7 @@ def process_directory(
                     stats['videos_converted'] += 1
                 else:
                     success, output_path = convert_video(
-                        vid_file, codec=video_codec, quality=video_quality, resize=resize
+                        vid_file, codec=video_codec, quality=video_quality
                     )
                     if success:
                         stats['videos_converted'] += 1
@@ -1408,7 +1647,6 @@ def process_directory(
                                 file_type='video',
                                 codec=video_codec,
                                 quality=video_quality,
-                                resize=resize,
                             )
                     else:
                         stats['videos_failed'] += 1
@@ -1684,18 +1922,17 @@ def _run_directory_conversion(config: Dict, start_dir: Path) -> int:
         return 1
 
     # Check hardware acceleration
-    hw_accel = get_hardware_acceleration()
-    if hw_accel == 'qsv':
+    hw_info = detect_full_hardware()
+    log_hardware_info(hw_info)
+    hw_accel = hw_info.best_for_8bit
+    if hw_accel == 'nvenc':
         log_message(
-            'SUCCESS', "Hardware acceleration: Intel Quick Sync Video detected!")
-        log_message('INFO', "  Video conversion will be 2-5x faster")
-    elif hw_accel == 'nvenc':
-        log_message(
-            'SUCCESS', "Hardware acceleration: NVIDIA NVENC detected!")
+            'SUCCESS', "Hardware acceleration: NVIDIA NVENC detected (dedicated GPU)!")
         log_message('INFO', "  Video conversion will be 3-5x faster")
-    elif hw_accel == 'vaapi':
-        log_message('SUCCESS', "Hardware acceleration: VAAPI detected!")
-        log_message('INFO', "  Video conversion will be 2-3x faster")
+    elif hw_accel == 'qsv':
+        log_message(
+            'SUCCESS', "Hardware acceleration: Intel Quick Sync Video detected (integrated GPU)!")
+        log_message('INFO', "  Video conversion will be 2-5x faster")
     else:
         log_message('WARN', "Hardware acceleration not detected")
         log_message('INFO', "  Conversion will use CPU (slower, but works)")
@@ -1803,7 +2040,7 @@ Video codecs:
 
 Video quality:
     auto     - Adaptive by resolution (recommended)
-    lossless - Lossless (very large files)
+    lossless - H265 truly lossless, H264 uses CRF 18 (very large files)
     high     - CRF 18, visually lossless (recommended)
     medium   - CRF 23, good quality, smaller files
 
@@ -1896,18 +2133,17 @@ Video resizing:
         return 1
 
     # Check hardware acceleration
-    hw_accel = get_hardware_acceleration()
-    if hw_accel == 'qsv':
+    hw_info = detect_full_hardware()
+    log_hardware_info(hw_info)
+    hw_accel = hw_info.best_for_8bit
+    if hw_accel == 'nvenc':
         log_message(
-            'SUCCESS', "Hardware acceleration: Intel Quick Sync Video detected!")
-        log_message('INFO', "  Video conversion will be 2-5x faster")
-    elif hw_accel == 'nvenc':
-        log_message(
-            'SUCCESS', "Hardware acceleration: NVIDIA NVENC detected!")
+            'SUCCESS', "Hardware acceleration: NVIDIA NVENC detected (dedicated GPU)!")
         log_message('INFO', "  Video conversion will be 3-5x faster")
-    elif hw_accel == 'vaapi':
-        log_message('SUCCESS', "Hardware acceleration: VAAPI detected!")
-        log_message('INFO', "  Video conversion will be 2-3x faster")
+    elif hw_accel == 'qsv':
+        log_message(
+            'SUCCESS', "Hardware acceleration: Intel Quick Sync Video detected (integrated GPU)!")
+        log_message('INFO', "  Video conversion will be 2-5x faster")
     else:
         log_message('WARN', "Hardware acceleration not detected")
         log_message('INFO', "  Conversion will use CPU (slower, but works)")
@@ -2011,7 +2247,7 @@ Video resizing:
 
     quality_desc = {
         'auto': 'adaptive by resolution (recommended)',
-        'lossless': 'truly lossless (very large files)',
+        'lossless': 'H265 truly lossless, H264 uses CRF 18 (very large files)',
         'high': 'CRF 18 - visually lossless (recommended)',
         'medium': 'CRF 23 - good quality, smaller size'
     }
