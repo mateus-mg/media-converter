@@ -168,20 +168,27 @@ Image Conversion
 Video Conversion
 
     ✅ Converts only MOV/MP4 videos with H.265/HEVC codec to H.264 (other codecs are skipped)
-    ✅ Hardware acceleration: Auto-detects Intel QSV, NVIDIA NVENC, VAAPI
-    ✅ Resolution-aware quality: Auto CRF: 23(4K), 20(2K), 18(≤1080p)
+    ✅ Hardware acceleration: Auto-detects NVIDIA NVENC, Intel QSV, Software (dynamic detection)
+    ✅ 10-bit support: Uses High 10 Profile for 10-bit sources (software encoder)
+    ✅ DOVI (Dolby Vision) support: Auto-detects and handles DOVI content (uses NVENC or software)
+    ✅ Bitrate-aware quality: Auto CRF based on source bitrate: <10Mbps→18-19, 10-25Mbps→20-21, 25-50Mbps→22-23, >50Mbps→23-24
     ✅ Smart resizing: Never upscales, maintains aspect ratio
     ✅ Faststart: Enables web streaming compatibility
     ✅ Metadata preservation: Copies creation/modification dates
+    ✅ Output validation: Verifies codec, resolution and duration after conversion
+    ✅ Optional audio handling: Videos without audio are processed correctly
     ✅ Output file: If input is already .mp4, output will be named with _converted suffix to avoid overwriting
 
 Preset & Quality Logic
 
     ✅ Preset is chosen automatically based on hardware, resolution, aspect ratio and codec:
+        - Software encoding uses slower presets (slow/slower) for better compression
+        - Hardware encoders (NVENC, QSV) use faster presets (p3-p5, fast)
         - 16:9 videos use faster presets
         - Non-16:9 videos use slower presets for better quality
         - H.265 always uses slower presets for better compression
-    ✅ CRF is set automatically by resolution (see above)
+    ✅ CRF is set automatically by source bitrate (see Technical Details)
+    ✅ 10-bit sources force software encoder to preserve quality (NVENC/QSV limitations)
 
 File Counting & Safety
 
@@ -253,10 +260,14 @@ HEIC/HEIF Images:
     Fallback: ImageMagick → JPEG/PNG
 
 H.265/HEVC Videos:
-    Detect hardware → QSV > NVENC > VAAPI > Software
+    Dynamic hardware detection → NVIDIA NVENC > Intel QSV > Software
+    10-bit sources force Software encoder (High 10 Profile)
+    DOVI (Dolby Vision) detected: uses NVENC if available, else software
     Detect codec via ffprobe (not by extension)
     Only MOV/MP4 with H.265/HEVC are converted
-    Auto CRF and preset based on resolution, aspect ratio, hardware
+    Auto CRF based on source bitrate, preset based on hardware type
+    Output validation: verifies codec, resolution, duration after conversion
+    Videos without audio are processed correctly (no audio codec error)
     Output file: If input is .mp4, output will be named with _converted suffix
     H.264 output for maximum compatibility
 
@@ -266,23 +277,22 @@ Quality Settings Explained
 
     PNG: True lossless, uses maximum compression (level 9)
 
-    Video CRF: Lower = better quality, higher = smaller files
+    Video CRF (by source bitrate): Lower = better quality, higher = smaller files
 
-        CRF 18: Visually lossless (≤1080p)
-
-        CRF 20: High quality (2K/1440p)
-
-        CRF 23: Good quality, smaller files (4K)
+        <10 Mbps: CRF 18-19 (preserve details in low bitrate sources)
+        10-25 Mbps: CRF 20-21 (balanced)
+        25-50 Mbps: CRF 22-23 (control size for high bitrate)
+        >50 Mbps: CRF 23-24 (prioritize size control)
 
 Hardware Acceleration Priority
 
-    Intel Quick Sync (QSV): Fastest, -global_quality parameter
+    NVIDIA NVENC: Fast, -cq parameter (best performance, not all GPUs support 10-bit)
 
-    NVIDIA NVENC: Fast, -cq parameter
+    Intel Quick Sync (QSV): Fast, -global_quality parameter
 
-    VAAPI: Generic hardware acceleration
+    Software (libx264): CPU-based, compatible everywhere (required for 10-bit sources)
 
-    Software (libx264): CPU-based, compatible everywhere
+    Note: 10-bit H264 sources force Software encoder (NVENC/QSV limitations)
 
 🐛 Troubleshooting
 Common Issues
