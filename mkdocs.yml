@@ -58,19 +58,22 @@ extra:
       link: https://github.com/mateus
   generator: false
 
+exclude_docs: |
+  superpowers/
+
 nav:
-  - Home: index.md
+  - Home: media-converter/index.md
   - Getting Started:
-    - getting-started/installation.md
-    - getting-started/quick-start.md
+    - media-converter/getting-started/installation.md
+    - media-converter/getting-started/quick-start.md
   - Architecture:
-    - architecture/overview.md
-    - architecture/modules.md
-    - architecture/data-flow.md
+    - media-converter/architecture/overview.md
+    - media-converter/architecture/modules.md
+    - media-converter/architecture/data-flow.md
   - Reference:
-    - reference/cli.md
+    - media-converter/reference/cli.md
   - Guides:
-    - guides/image-conversion.md
-    - guides/video-conversion.md
-    - guides/recovery.md
-    - guides/troubleshooting.md
+    - media-converter/guides/image-conversion.md
+    - media-converter/guides/video-conversion.md
+    - media-converter/guides/recovery.md
+    - media-converter/guides/troubleshooting.md
