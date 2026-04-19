@@ -1,7 +1,22 @@
 #!/usr/bin/env python3
 """
-Log Formatter - Estrutura hierárquica padronizada para logs
-Media Converter System
+Log Formatter - Hierarchical log formatter with 3 levels of structure
+
+Provides structured logging output with:
+    - Major headers (level 1): Section separators
+    - Minor headers (level 2): Subsection titles
+    - Items (level 3): Key-value pairs
+
+Symbols (reduced usage):
+    - ✓: Success
+    - ✗: Error
+    - !: Warning
+
+Usage:
+    from log_formatter import LogSection, format_conversion_session
+
+    section = LogSection()
+    print(section.major_header("CONVERSION START"))
 """
 
 from typing import List, Dict, Any, Optional
@@ -9,7 +24,7 @@ from datetime import datetime
 
 
 class LogSection:
-    """Formatador hierárquico de logs com 3 níveis de estrutura"""
+    """Hierarchical log formatter with 3 levels of structure."""
 
     # Separadores visuais
     SEP_MAJOR = "━" * 80
@@ -29,14 +44,14 @@ class LogSection:
     @staticmethod
     def major_header(title: str, subtitle: str = None) -> List[str]:
         """
-        Cabeçalho de seção principal (Nível 1)
+        Major section header (Level 1)
 
         Args:
-            title: Título principal da seção
-            subtitle: Subtítulo opcional (informações adicionais)
+            title: Main section title
+            subtitle: Optional subtitle (additional info)
 
         Returns:
-            Lista de linhas formatadas
+            List of formatted lines
 
         Example:
             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -53,13 +68,13 @@ class LogSection:
     @staticmethod
     def minor_header(title: str) -> List[str]:
         """
-        Cabeçalho de subseção (Nível 2)
+        Subsection header (Level 2)
 
         Args:
-            title: Título da subseção
+            title: Subsection title
 
         Returns:
-            Lista de linhas formatadas
+            List of formatted lines
 
         Example:
             ──────────────────────────────────────────────────────────
@@ -71,15 +86,15 @@ class LogSection:
     @staticmethod
     def section(title: str, items: Dict[str, Any], indent: str = INDENT_L2) -> List[str]:
         """
-        Seção com múltiplos items (Nível 2)
+        Section with multiple items (Level 2)
 
         Args:
-            title: Título da seção
-            items: Dicionário com pares chave-valor
-            indent: String de indentação (padrão: 2 espaços)
+            title: Section title
+            items: Dictionary with key-value pairs
+            indent: Indentation string (default: 2 spaces)
 
         Returns:
-            Lista de linhas formatadas
+            List of formatted lines
 
         Example:
             Conversion Settings
@@ -108,15 +123,15 @@ class LogSection:
     @staticmethod
     def inline_section(title: str, items: Dict[str, Any], sep: str = " | ") -> str:
         """
-        Seção compacta inline com separador
+        Compact inline section with separator
 
         Args:
-            title: Título da seção inline
-            items: Dicionário com pares chave-valor
-            sep: Separador entre items (padrão: " | ")
+            title: Inline section title
+            items: Dictionary with key-value pairs
+            sep: Separator between items (default: " | ")
 
         Returns:
-            String formatada inline
+            Inline formatted string
 
         Example:
             "Settings: Format: HEIC to JPEG | Quality: 95% | Size: Original"
@@ -127,15 +142,15 @@ class LogSection:
     @staticmethod
     def key_value_list(items: Dict[str, Any], sep: str = " | ", max_items: Optional[int] = None) -> str:
         """
-        Lista de pares chave-valor separados inline
+        Inline-separated key-value list
 
         Args:
-            items: Dicionário com pares chave-valor
-            sep: Separador entre items (padrão: " | ")
-            max_items: Número máximo de items (None = todos)
+            items: Dictionary with key-value pairs
+            sep: Separator between items (default: " | ")
+            max_items: Maximum number of items (None = all)
 
         Returns:
-            String formatada inline
+            Inline formatted string
 
         Example:
             "Format: HEIC to JPEG | Quality: 95% | Size: Original"
@@ -150,16 +165,16 @@ class LogSection:
     def progress_line(current: int, total: int, label: str = "Progress",
                       extras: Optional[Dict[str, Any]] = None) -> str:
         """
-        Linha de progresso com informações adicionais
+        Progress line with additional information
 
         Args:
-            current: Valor atual
-            total: Valor total
-            label: Label do progresso (padrão: "Progress")
-            extras: Informações extras para adicionar
+            current: Current value
+            total: Total value
+            label: Progress label (default: "Progress")
+            extras: Additional info to add
 
         Returns:
-            String formatada
+            Formatted string
 
         Example:
             "[Progress: 23/25 | 2 failed | 68 quota left | Elapsed: 4m 12s]"
@@ -176,17 +191,17 @@ class LogSection:
     def conversion_item(input_file: str, output_file: str, details: Optional[str] = None,
                         status: str = "OK", indent: str = INDENT_L2) -> List[str]:
         """
-        Item de conversão estruturado
+        Structured conversion item
 
         Args:
-            input_file: Arquivo de entrada
-            output_file: Arquivo de saída
-            details: Detalhes da conversão (tamanho, qualidade, codec)
-            status: Símbolo de status (padrão: "OK")
-            indent: Indentação (padrão: 2 espaços)
+            input_file: Input file
+            output_file: Output file
+            details: Conversion details (size, quality, codec)
+            status: Status symbol (default: "OK")
+            indent: Indentation (default: 2 spaces)
 
         Returns:
-            Lista de linhas formatadas
+            List of formatted lines
 
         Example:
             > photo.HEIC > photo.JPG
@@ -200,14 +215,14 @@ class LogSection:
     @staticmethod
     def error_block(title: str, details: Dict[str, Any]) -> List[str]:
         """
-        Bloco de erro estruturado
+        Structured error block
 
         Args:
-            title: Título do erro
-            details: Detalhes do erro (status, action, etc.)
+            title: Error title
+            details: Error details (status, action, etc.)
 
         Returns:
-            Lista de linhas formatadas
+            List of formatted lines
 
         Example:
             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -227,13 +242,13 @@ class LogSection:
     @staticmethod
     def format_duration(seconds: float) -> str:
         """
-        Formata duração em horas/minutos legível
+        Format duration in human-readable hours/minutes
 
         Args:
-            seconds: Duração em segundos
+            seconds: Duration in seconds
 
         Returns:
-            String formatada (ex: "4h 33m", "45m", "2h 00m")
+            Formatted string (e.g., "4h 33m", "45m", "2h 00m")
         """
         hours = int(seconds // 3600)
         minutes = int((seconds % 3600) // 60)
@@ -249,13 +264,13 @@ class LogSection:
     @staticmethod
     def format_size(bytes_size: float) -> str:
         """
-        Formata tamanho de arquivo em formato legível
+        Format file size in human-readable format
 
         Args:
-            bytes_size: Tamanho em bytes
+            bytes_size: Size in bytes
 
         Returns:
-            String formatada (ex: "8.3MB", "1.2GB")
+            Formatted string (e.g., "8.3MB", "1.2GB")
         """
         if bytes_size >= 1024**3:
             return f"{bytes_size / (1024**3):.1f}GB"
@@ -269,14 +284,14 @@ class LogSection:
     @staticmethod
     def format_timestamp(dt: Optional[datetime] = None, fmt: str = "%Y-%m-%d %H:%M:%S") -> str:
         """
-        Formata timestamp para formato legível
+        Format timestamp in human-readable format
 
         Args:
-            dt: Objeto datetime (None = agora)
-            fmt: Formato de saída
+            dt: datetime object (None = now)
+            fmt: Output format
 
         Returns:
-            String formatada
+            Formatted string
         """
         if dt is None:
             dt = datetime.now()
@@ -285,15 +300,15 @@ class LogSection:
     @staticmethod
     def table_row(columns: List[Any], widths: Optional[List[int]] = None, align: str = "left") -> str:
         """
-        Formata linha de tabela com colunas alinhadas
+        Format table row with aligned columns
 
         Args:
-            columns: Lista de valores das colunas
-            widths: Lista de larguras de cada coluna (None = auto)
-            align: Alinhamento ("left", "right", "center")
+            columns: List of column values
+            widths: List of widths for each column (None = auto)
+            align: Alignment ("left", "right", "center")
 
         Returns:
-            String formatada
+            Formatted string
 
         Example:
             "Images: 70 converted | 18 failed | 30 remaining"
@@ -316,15 +331,15 @@ class LogSection:
     @staticmethod
     def summary_line(label: str, items: Dict[str, Any], sep: str = " | ") -> str:
         """
-        Linha de sumário com label e items
+        Summary line with label and items
 
         Args:
-            label: Label da linha (será alinhado à esquerda)
-            items: Dicionário de items
-            sep: Separador entre items
+            label: Line label (will be left-aligned)
+            items: Dictionary of items
+            sep: Separator between items
 
         Returns:
-            String formatada
+            Formatted string
 
         Example:
             "Results:  70 converted | 18 failed | 30 remaining"
@@ -335,54 +350,54 @@ class LogSection:
 
 
 class LogBuilder:
-    """Builder para construir logs complexos de forma fluente"""
+    """Builder for constructing complex logs fluently"""
 
     def __init__(self):
         self.lines: List[str] = []
 
     def add_major_header(self, title: str, subtitle: str = None) -> 'LogBuilder':
-        """Adiciona cabeçalho principal"""
+        """Add major header"""
         self.lines.extend(LogSection.major_header(title, subtitle))
         return self
 
     def add_minor_header(self, title: str) -> 'LogBuilder':
-        """Adiciona cabeçalho de subseção"""
+        """Add subsection header"""
         self.lines.extend(LogSection.minor_header(title))
         return self
 
     def add_section(self, title: str, items: Dict[str, Any], indent: str = LogSection.INDENT_L2) -> 'LogBuilder':
-        """Adiciona seção com items"""
+        """Add section with items"""
         self.lines.extend(LogSection.section(title, items, indent))
         return self
 
     def add_line(self, line: str) -> 'LogBuilder':
-        """Adiciona linha customizada"""
+        """Add custom line"""
         self.lines.append(line)
         return self
 
     def add_blank(self, count: int = 1) -> 'LogBuilder':
-        """Adiciona linhas em branco"""
+        """Add blank lines"""
         self.lines.extend([""] * count)
         return self
 
     def build(self) -> List[str]:
-        """Retorna lista de linhas construídas"""
+        """Return list of constructed lines"""
         return self.lines
 
     def build_str(self, sep: str = "\n") -> str:
-        """Retorna string única com todas as linhas"""
+        """Return single string with all lines"""
         return sep.join(self.lines)
 
 
-# Funções de conveniência para casos comuns
+# Convenience functions for common cases
 def format_conversion_session(start_time: datetime, total_files: int,
                             settings: Dict[str, Any], performance: Dict[str, Any],
                             checks: Dict[str, bool]) -> List[str]:
     """
-    Formata log de sessão de conversão
+    Format conversion session log
 
     Returns:
-        Lista de linhas formatadas
+        List of formatted lines
     """
     builder = LogBuilder()
 
@@ -411,10 +426,10 @@ def format_conversion_session(start_time: datetime, total_files: int,
 def format_conversion_start(filename: str, file_info: Dict[str, Any],
                           settings: Dict[str, Any], processing: Dict[str, Any]) -> List[str]:
     """
-    Formata log de início de conversão individual
+    Format individual conversion start log
 
     Returns:
-        Lista de linhas formatadas
+        List of formatted lines
     """
     builder = LogBuilder()
 
@@ -438,10 +453,10 @@ def format_conversion_complete(filename: str, duration: float, results: Dict[str
                              quality: Dict[str, Any], errors: Dict[str, Any],
                              next_action: Optional[str] = None) -> List[str]:
     """
-    Formata log de conclusão de conversão
+    Format conversion complete log
 
     Returns:
-        Lista de linhas formatadas
+        List of formatted lines
     """
     builder = LogBuilder()
 
@@ -465,18 +480,18 @@ def format_batch_summary(total_processed: int, successful: int, failed: int,
                         total_size: float, elapsed_time: float,
                         throughput: float) -> List[str]:
     """
-    Formata sumário de lote de conversões
+    Format batch conversion summary
 
     Args:
-        total_processed: Total de arquivos processados
-        successful: Arquivos com sucesso
-        failed: Arquivos com falha
-        total_size: Tamanho total processado em bytes
-        elapsed_time: Tempo decorrido em segundos
-        throughput: Taxa de processamento (arquivos por segundo)
+        total_processed: Total files processed
+        successful: Successful files
+        failed: Failed files
+        total_size: Total size processed in bytes
+        elapsed_time: Elapsed time in seconds
+        throughput: Processing rate (files per second)
 
     Returns:
-        Lista de linhas formatadas
+        List of formatted lines
     """
     builder = LogBuilder()
 
@@ -506,13 +521,13 @@ def format_batch_summary(total_processed: int, successful: int, failed: int,
 
 def format_system_shutdown(summary: Dict[str, str]) -> List[str]:
     """
-    Formata log de encerramento do sistema
+    Format system shutdown log
 
     Args:
-        summary: Dicionário com estatísticas formatadas
+        summary: Dictionary with formatted statistics
 
     Returns:
-        Lista de linhas formatadas
+        List of formatted lines
     """
     builder = LogBuilder()
 
@@ -529,14 +544,14 @@ def format_system_shutdown(summary: Dict[str, str]) -> List[str]:
 
 def format_hardware_detection(hw_accel: str, capabilities: Dict[str, Any]) -> List[str]:
     """
-    Formata log de detecção de aceleração de hardware
+    Format hardware acceleration detection log
 
     Args:
-        hw_accel: Tipo de aceleração detectada (qsv, nvenc, vaapi, none)
-        capabilities: Capacidades de aceleração
+        hw_accel: Detected acceleration type (qsv, nvenc, vaapi, none)
+        capabilities: Acceleration capabilities
 
     Returns:
-        Lista de linhas formatadas
+        List of formatted lines
     """
     builder = LogBuilder()
 

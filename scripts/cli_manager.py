@@ -1,7 +1,20 @@
 #!/usr/bin/env python3
 """
-CLI Manager for Media Converter System
-Command-line interface for converting HEIC/HEIF images to JPEG/PNG and HEVC videos to H.264
+CLI Manager for Media Converter
+
+Provides an interactive command-line interface using Rich library.
+Handles user input, menu navigation, and orchestrates conversion operations.
+
+Features:
+    - Interactive menu system
+    - Rich-formatted output
+    - System status checks
+    - Dependency verification
+
+Usage:
+    converter (interactive mode)
+    media-converter status
+    media-converter check-deps
 """
 
 # Flexible import to handle direct execution and importing
