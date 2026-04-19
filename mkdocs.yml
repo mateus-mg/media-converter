@@ -1,0 +1,76 @@
+site_name: Media Converter Documentation
+site_description: Universal HEIC & HEVC Converter - converts images and videos with hardware acceleration
+site_author: mateus
+site_url: https://mateus.github.io/media-converter
+
+repo_name: mateus/media-converter
+repo_url: https://github.com/mateus/media-converter
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: blue
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: blue
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - search.suggest
+    - search.highlight
+    - content.tabs.link
+    - content.code.copy
+  font:
+    text: Roboto
+    code: Roboto Mono
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            show_source: true
+  - mermaid2
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - admonition
+  - pymdownx.details
+  - pymdownx.mark
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/mateus
+  generator: false
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - getting-started/installation.md
+    - getting-started/quick-start.md
+  - Architecture:
+    - architecture/overview.md
+    - architecture/modules.md
+    - architecture/data-flow.md
+  - Reference:
+    - reference/cli.md
+  - Guides:
+    - guides/image-conversion.md
+    - guides/video-conversion.md
+    - guides/recovery.md
+    - guides/troubleshooting.md
