@@ -1,8 +1,25 @@
 #!/usr/bin/env python3
 """
-Universal HEIC & HEVC Converter
-Converts HEIC/HEIF images to JPEG 95% (or PNG) and H.265/HEVC videos to H.264 (maximum compatibility)
-Compatible with files from smartphones, GoPro, and other devices.
+Media Converter
+
+Universal converter for HEIC/HEIF images and H.265/HEVC videos.
+Converts images to JPEG 95% (or PNG) and videos to H.264 (maximum compatibility).
+
+Supported sources:
+    - Smartphones (iOS, Android)
+    - GoPro, DJI action cameras
+    - Samsung, Sony, and other devices
+
+Features:
+    - Hardware acceleration (NVIDIA NVENC, Intel QSV)
+    - Automatic quality (CRF based on source bitrate)
+    - EXIF preservation for images
+    - Metadata preservation for videos
+    - Conversion database to prevent duplicate work
+
+Usage:
+    converter /path/to/media [options]
+    python3 scripts/media_converter.py /path/to/media [options]
 """
 
 from dataclasses import dataclass, field
@@ -615,10 +632,18 @@ def is_16_9_aspect(width: int, height: int) -> bool:
 
 
 def get_effective_dimensions(width: int, height: int, rotation: float) -> Tuple[int, int]:
-    """Retorna dimensões efetivas considerando rotação.
+    """Calculate effective dimensions considering rotation.
 
-    Vídeos de celular filmados em retrato têm rotação=90° mas dimensões brutas em paisagem.
-    Esta função corrige as dimensões para refletir a orientação real de exibição.
+    Phone videos filmed in portrait mode have rotation=90° but raw dimensions in landscape.
+    This function corrects dimensions to reflect the actual display orientation.
+
+    Args:
+        width: Original video width
+        height: Original video height
+        rotation: Rotation angle in degrees (0, 90, 180, 270)
+
+    Returns:
+        Tuple of (effective_width, effective_height) with rotation applied
     """
     if abs(rotation) in (90, 270):
         return height, width
