@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
-Recovery Pipeline - Orchestrate the full recovery process
+Recovery Pipeline - Orchestrate the full video recovery process
 
 Runs all stages in sequence:
-1. Inventory server (Ellen + Mateus)
-2. Inventory recovered (PhotoRec)
-3. Find pairs (Ellen <-> Mateus)
-4. Detect squashed
-5. Match originals
-6. Report
+    1. Inventory server (Ellen + Mateus)
+    2. Inventory recovered (PhotoRec)
+    3. Find pairs (Ellen <-> Mateus)
+    4. Detect squashed
+    5. Match originals
+    6. Organize
+    7. Report
 
 Usage:
     python3 scripts/recovery/run_pipeline.py [--skip-inventory] [--dry-run-organize]
@@ -41,61 +42,61 @@ def run_pipeline(skip_inventory: bool = False, dry_run_organize: bool = False):
     data_dir = Path(__file__).parent.parent.parent / 'data'
 
     print("\n" + "=" * 60)
-    print("PIPELINE DE RECUPERACAO DE VIDEOS COM BUG DE ASPECT RATIO")
+    print("VIDEO RECOVERY PIPELINE FOR ASPECT RATIO BUG")
     print("=" * 60)
 
     # Stage 1: Server inventory
     if not skip_inventory:
-        print("\n>>> ESTAGIO 1: Inventario do servidor (Ellen + Mateus)")
-        print("    Isso pode levar varios minutos...")
+        print("\n>>> STAGE 1: Server inventory (Ellen + Mateus)")
+        print("    This may take several minutes...")
         build_server_inventory()
     else:
-        print("\n>>> ESTAGIO 1: SKIPPED (usando inventario existente)")
+        print("\n>>> STAGE 1: SKIPPED (using existing inventory)")
 
     # Stage 2: Recovered inventory
     if not skip_inventory:
-        print("\n>>> ESTAGIO 2: Inventario recuperado (PhotoRec)")
-        print("    Isso pode levar varios minutos...")
+        print("\n>>> STAGE 2: Recovered inventory (PhotoRec)")
+        print("    This may take several minutes...")
         build_recovered_inventory()
     else:
-        print("\n>>> ESTAGIO 2: SKIPPED (usando inventario existente)")
+        print("\n>>> STAGE 2: SKIPPED (using existing inventory)")
 
     # Stage 3: Find pairs
-    print("\n>>> ESTAGIO 3: Encontrar pares (Ellen <-> Mateus)")
+    print("\n>>> STAGE 3: Find pairs (Ellen <-> Mateus)")
     pairs = find_pairs()
-    print(f"    Resultado: {len(pairs)} pares encontrados")
+    print(f"    Result: {len(pairs)} pairs found")
 
     # Stage 4: Detect squashed
-    print("\n>>> ESTAGIO 4: Detectar videos squashed")
+    print("\n>>> STAGE 4: Detect squashed videos")
     squashed = detect_squashed()
-    print(f"    Resultado: {len(squashed)} videos squashed detectados")
+    print(f"    Result: {len(squashed)} squashed videos detected")
 
     # Stage 5: Match originals
-    print("\n>>> ESTAGIO 5: Match com originais recuperados")
+    print("\n>>> STAGE 5: Match with recovered originals")
     matched = match_originals()
-    print(f"    Resultado: {len(matched)} pares com original encontrado")
+    print(f"    Result: {len(matched)} pairs with original found")
 
     # Stage 6: Organize (if not dry run)
     if not dry_run_organize:
-        print("\n>>> ESTAGIO 6: Organizar pares (MOVER arquivos)")
-        print("    ATENCAO: Os arquivos squashed serao MOVIDOS!")
-        confirm = input("    Confirmar? (s/N): ")
-        if confirm.lower() == 's':
+        print("\n>>> STAGE 6: Organize pairs (MOVE files)")
+        print("    WARNING: Squashed files will be MOVED!")
+        confirm = input("    Confirm? (y/N): ")
+        if confirm.lower() == 'y':
             stats = organize_pairs()
-            print(f"    Resultado: {stats}")
+            print(f"    Result: {stats}")
         else:
-            print("    Pulando organizacao")
+            print("    Skipping organization")
     else:
-        print("\n>>> ESTAGIO 6: DRY RUN - organizacao")
+        print("\n>>> STAGE 6: DRY RUN - organization")
         stats = organize_pairs(dry_run=True)
-        print(f"    Resultado (simulado): {stats}")
+        print(f"    Result (simulated): {stats}")
 
     # Stage 7: Report
-    print("\n>>> ESTAGIO 7: Gerar relatorio")
+    print("\n>>> STAGE 7: Generate report")
     generate_report()
 
     elapsed = time.time() - start
-    print(f"\nPipeline concluido em {elapsed:.1f} segundos")
+    print(f"\nPipeline completed in {elapsed:.1f} seconds")
 
 
 if __name__ == '__main__':
