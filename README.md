@@ -1,11 +1,10 @@
 # Universal HEIC & HEVC Converter
 
-[![Build Status](https://github.com/mateus/media-converter/actions/workflows/docs.yml/badge.svg)](https://github.com/mateus/media-converter/actions)
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-
 Converts HEIC/HEIF images to JPEG 95% (or PNG) and MOV/MP4 videos with H.265/HEVC codec to H.264 (maximum compatibility). Compatible with files from iOS, GoPro, DJI, Samsung, Sony, and other devices.
 
 **Only videos with H.265/HEVC codec are converted; videos already in H.264 or other codecs are skipped.**
+
+> **Documentation:** Full documentation is now available at [https://mateus-mg.github.io/media-converter](https://mateus-mg.github.io/media-converter)
 
 ## Table of Contents
 
