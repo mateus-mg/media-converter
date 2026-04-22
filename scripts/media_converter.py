@@ -1256,7 +1256,12 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto') 
     
     # Check if source is 10-bit
     is_10bit = '10le' in source_pixel_format or 'p010' in source_pixel_format
-    
+
+    # Detect HDR (High Dynamic Range) for tone mapping
+    is_hdr = _is_hdr_video(video_info)
+    if is_hdr:
+        log_message('INFO', f"  HDR detected - will apply tone mapping for SDR output")
+
     # Select appropriate encoder based on bit depth
     if is_10bit:
         hw_accel = hw_info.best_for_10bit
@@ -1412,8 +1417,14 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto') 
     audio_codec = ['-c:a', 'aac', '-b:a', '256k', '-ar', '48000'] if has_audio_stream else []
 
 
-    # Build video filters (empty - no transpose, no scale)
+    # Build video filters
     video_filters = []
+
+    # Apply tone mapping for HDR→SDR conversion
+    if is_hdr:
+        tone_mapping_filter = 'zscale=t=linear:npl=100,format=pix_fmts=yuv420p:range=tv,tonemap=hable:desat=0'
+        video_filters = ['-vf', tone_mapping_filter]
+        log_message('INFO', f"  Applying HDR→SDR tone mapping (bt2020→bt709)")
 
     # Build FFmpeg command
     cmd = [

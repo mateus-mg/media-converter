@@ -132,6 +132,41 @@ class TestMediaConverterProcessing(unittest.TestCase):
         result = mc._is_hdr_video(fake_info)
         self.assertTrue(result)
 
+    def test_tone_mapping_filter_added_for_hdr_source(self):
+        """When source is HDR, tone mapping filter should be added to video_filters"""
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = Path(tmp) / "hdr_clip.mov"
+            output_file = Path(tmp) / "hdr_clip.mp4"
+            input_file.write_bytes(b"x")
+
+            fake_info = {
+                "streams": [{
+                    "codec_type": "video",
+                    "codec_name": "hevc",
+                    "width": 3840,
+                    "height": 2160,
+                    "pix_fmt": "yuv420p10le",
+                    "color_primaries": "bt2020",
+                    "transfer_characteristics": "smpte2084",
+                }],
+                "format": {"duration": "5"},
+            }
+
+            with patch.object(mc, "get_video_info", return_value=fake_info), \
+                 patch.object(mc, "detect_full_hardware") as hw_mock, \
+                 patch.object(mc, "check_nvenc_available", return_value=False), \
+                 patch.object(mc, "log_message"), \
+                 patch("subprocess.run") as mock_run:
+                mock_run.return_value = unittest.mock.Mock(returncode=0, stdout="", stderr="")
+                success, _ = mc.convert_video(input_file)
+
+            call_args = mock_run.call_args[0][0]
+            filter_idx = call_args.index('-vf') if '-vf' in call_args else None
+            self.assertIsNotNone(filter_idx, "No video filter added for HDR source")
+            filter_str = call_args[filter_idx + 1]
+            self.assertIn('zscale', filter_str)
+            self.assertIn('tonemap=hable', filter_str)
+
 
 if __name__ == "__main__":
     unittest.main()
