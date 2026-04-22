@@ -182,10 +182,11 @@ def _is_hdr_video(video_info: Dict) -> bool:
     for stream in video_info['streams']:
         if stream.get('codec_type') == 'video':
             color_primaries = stream.get('color_primaries', '').lower()
-            transfer = stream.get('transfer_characteristics', '').lower()
+            # Handle both transfer_characteristics and color_transfer (ffprobe uses both names)
+            transfer = stream.get('transfer_characteristics') or stream.get('color_transfer', '')
 
             is_wide_gamut = color_primaries == 'bt2020'
-            is_hdr_transfer = transfer in ('smpte2084', 'arib-std-b67')
+            is_hdr_transfer = transfer.lower() in ('smpte2084', 'arib-std-b67') if transfer else False
 
             return is_wide_gamut and is_hdr_transfer
 
@@ -1443,7 +1444,7 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto') 
 
     # Apply tone mapping for HDR→SDR conversion
     if is_hdr:
-        tone_mapping_filter = 'zscale=t=linear:npl=100,format=pix_fmts=yuv420p:range=tv,tonemap=hable:desat=0'
+        tone_mapping_filter = 'zscale=t=linear:npl=100,format=pix_fmts=yuv420p,tonemap=hable:desat=0'
         video_filters = ['-vf', tone_mapping_filter]
         log_message('INFO', f"  Applying HDR→SDR tone mapping (bt2020→bt709)")
 
