@@ -235,6 +235,42 @@ class TestMediaConverterProcessing(unittest.TestCase):
             self.assertNotIn('-global_quality', call_args, "QSV lossless should not use global_quality")
             self.assertIn('-lossless', call_args, "QSV lossless should use -lossless option")
 
+    def test_nvenc_lossless_uses_rc_lossless(self):
+        """When NVENC encoder with lossless, should use -rc lossless not -cq"""
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = Path(tmp) / "clip.mov"
+            output_file = Path(tmp) / "clip.mp4"
+            input_file.write_bytes(b"x")
+
+            fake_info = {
+                "streams": [{
+                    "codec_type": "video",
+                    "codec_name": "hevc",
+                    "width": 1920,
+                    "height": 1080,
+                    "pix_fmt": "yuv420p",
+                }],
+                "format": {"duration": "5"},
+            }
+
+            mock_hw = unittest.mock.Mock()
+            mock_hw.best_for_8bit = 'nvenc'
+            mock_hw.gpu_nvidia = unittest.mock.Mock(supports_10bit=False)
+
+            with patch.object(mc, "get_video_info", return_value=fake_info), \
+                 patch.object(mc, "detect_full_hardware", return_value=mock_hw), \
+                 patch.object(mc, "check_nvenc_available", return_value=True), \
+                 patch.object(mc, "log_message"), \
+                 patch("subprocess.run") as mock_run:
+                mock_run.return_value = unittest.mock.Mock(returncode=0, stdout="", stderr="")
+                success, _ = mc.convert_video(input_file, codec='h264', quality='lossless')
+
+            call_args = mock_run.call_args[0][0]
+            self.assertNotIn('-cq', call_args, "NVENC lossless should not use -cq")
+            self.assertIn('-rc', call_args, "NVENC should use -rc for lossless")
+            rc_idx = call_args.index('-rc')
+            self.assertEqual(call_args[rc_idx + 1], 'lossless', "NVENC RC should be lossless")
+
 
 if __name__ == "__main__":
     unittest.main()

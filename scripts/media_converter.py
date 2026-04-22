@@ -1386,14 +1386,24 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto') 
                     '-profile:v', 'high'
                 ]
         elif hw_accel == 'nvenc':
-            log_message(
-                'INFO', f"  Using NVIDIA NVENC (hardware acceleration, preset: {optimal_preset})")
-            video_codec = [
-                '-c:v', 'h264_nvenc',
-                '-cq', selected_crf,
-                '-preset', optimal_preset,
-                '-profile:v', 'high'
-            ]
+            if quality_mode == 'lossless':
+                log_message(
+                    'INFO', f"  Using NVIDIA NVENC (lossless, preset: {optimal_preset})")
+                video_codec = [
+                    '-c:v', 'h264_nvenc',
+                    '-rc', 'lossless',
+                    '-preset', optimal_preset,
+                    '-profile:v', 'high'
+                ]
+            else:
+                log_message(
+                    'INFO', f"  Using NVIDIA NVENC (hardware acceleration, preset: {optimal_preset})")
+                video_codec = [
+                    '-c:v', 'h264_nvenc',
+                    '-cq', selected_crf,
+                    '-preset', optimal_preset,
+                    '-profile:v', 'high'
+                ]
         elif quality_mode == 'lossless':
             log_message('INFO', f"  Using H.264 lossless encoder (-lossless 1)")
             video_codec = ['-c:v', 'libx264', '-lossless', '1', '-preset', 'medium', '-profile:v', 'high', '-level', '4.1']
