@@ -201,5 +201,40 @@ class TestMediaConverterProcessing(unittest.TestCase):
             self.assertEqual(call_args[lossless_idx + 1], '1', "Lossless level should be 1")
 
 
+    def test_qsv_lossless_uses_lossless_option(self):
+        """When QSV encoder with lossless, should use lossless option not global_quality"""
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = Path(tmp) / "clip.mov"
+            output_file = Path(tmp) / "clip.mp4"
+            input_file.write_bytes(b"x")
+
+            fake_info = {
+                "streams": [{
+                    "codec_type": "video",
+                    "codec_name": "hevc",
+                    "width": 1920,
+                    "height": 1080,
+                    "pix_fmt": "yuv420p",
+                }],
+                "format": {"duration": "5"},
+            }
+
+            mock_hw = unittest.mock.Mock()
+            mock_hw.best_for_8bit = 'qsv'
+            mock_hw.gpu_nvidia = None
+
+            with patch.object(mc, "get_video_info", return_value=fake_info), \
+                 patch.object(mc, "detect_full_hardware", return_value=mock_hw), \
+                 patch.object(mc, "check_nvenc_available", return_value=False), \
+                 patch.object(mc, "log_message"), \
+                 patch("subprocess.run") as mock_run:
+                mock_run.return_value = unittest.mock.Mock(returncode=0, stdout="", stderr="")
+                success, _ = mc.convert_video(input_file, codec='h264', quality='lossless')
+
+            call_args = mock_run.call_args[0][0]
+            self.assertNotIn('-global_quality', call_args, "QSV lossless should not use global_quality")
+            self.assertIn('-lossless', call_args, "QSV lossless should use -lossless option")
+
+
 if __name__ == "__main__":
     unittest.main()

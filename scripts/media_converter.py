@@ -1357,17 +1357,28 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto') 
                 '-level', '4.1'
             ]
         elif hw_accel == 'qsv':
-            log_message(
-                'INFO', f"  Using Intel Quick Sync Video (hardware acceleration, preset: {optimal_preset})")
-            if is_10bit:
+            if quality_mode == 'lossless':
+                log_message(
+                    'INFO', f"  Using Intel Quick Sync Video (lossless, preset: {optimal_preset})")
+                video_codec = [
+                    '-c:v', 'h264_qsv',
+                    '-lossless', '1',
+                    '-preset', optimal_preset,
+                    '-profile:v', 'high'
+                ]
+            elif is_10bit:
+                log_message(
+                    'INFO', f"  Using Intel Quick Sync Video (hardware acceleration, preset: {optimal_preset})")
                 video_codec = [
                     '-c:v', 'h264_qsv',
                     '-global_quality', selected_crf,
                     '-preset', optimal_preset,
-                    '-profile:v', 'high',  # QSV uses different profile naming
+                    '-profile:v', 'high',
                     '-pix_fmt', 'p010le' if 'p010' in source_pixel_format else 'yuv420p10le'
                 ]
             else:
+                log_message(
+                    'INFO', f"  Using Intel Quick Sync Video (hardware acceleration, preset: {optimal_preset})")
                 video_codec = [
                     '-c:v', 'h264_qsv',
                     '-global_quality', selected_crf,
