@@ -271,6 +271,46 @@ class TestMediaConverterProcessing(unittest.TestCase):
             rc_idx = call_args.index('-rc')
             self.assertEqual(call_args[rc_idx + 1], 'lossless', "NVENC RC should be lossless")
 
+    def test_hdr_preset_compensation_in_auto_crf(self):
+        """When HDR is detected and quality=auto, preset should compensate for tone mapping overhead"""
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = Path(tmp) / "hdr_clip.mov"
+            output_file = Path(tmp) / "hdr_clip.mp4"
+            input_file.write_bytes(b"x")
+
+            fake_info = {
+                "streams": [{
+                    "codec_type": "video",
+                    "codec_name": "hevc",
+                    "width": 3840,
+                    "height": 2160,
+                    "pix_fmt": "yuv420p10le",
+                    "color_primaries": "bt2020",
+                    "transfer_characteristics": "smpte2084",
+                }],
+                "format": {"duration": "5"},
+            }
+
+            with patch.object(mc, "get_video_info", return_value=fake_info), \
+                 patch.object(mc, "detect_full_hardware") as hw_mock, \
+                 patch.object(mc, "check_nvenc_available", return_value=False), \
+                 patch.object(mc, "log_message"), \
+                 patch("subprocess.run") as mock_run:
+                mock_run.return_value = unittest.mock.Mock(returncode=0, stdout="", stderr="")
+                # Call with quality='auto' to trigger _determine_auto_crf_and_preset
+                success, _ = mc.convert_video(input_file, codec='h264', quality='auto')
+
+            call_args = mock_run.call_args[0][0]
+            # HDR source should use faster preset to compensate for tone mapping overhead
+            preset_idx = call_args.index('-preset')
+            preset = call_args[preset_idx + 1]
+            # For 4K HDR with software encoder:
+            # - Base preset for 4K software is 'slow'
+            # - HDR compensation moves one step faster
+            # - Result should be 'medium' (faster than 'slow')
+            self.assertIn(preset, ['medium', 'fast'],
+                f"HDR 4K should use faster preset for tone mapping, got {preset}")
+
 
 if __name__ == "__main__":
     unittest.main()
