@@ -29,7 +29,6 @@ import sys
 import subprocess
 import shutil
 from pathlib import Path
-from typing import Dict, List, Tuple
 import argparse
 import logging
 
@@ -162,6 +161,35 @@ def detect_full_hardware() -> HardwareInfo:
     
     _hw_info_cached = hw
     return hw
+
+
+def _is_hdr_video(video_info: Dict) -> bool:
+    """Detect if video has HDR (High Dynamic Range) metadata.
+
+    HDR is detected when:
+    - color_primaries is bt2020 (wide color gamut) AND
+    - transfer_characteristics is smpte2084 (PQ) or arib-std-b67 (HLG)
+
+    Args:
+        video_info: ffprobe JSON output with streams
+
+    Returns:
+        True if HDR detected, False otherwise
+    """
+    if not video_info or 'streams' not in video_info:
+        return False
+
+    for stream in video_info['streams']:
+        if stream.get('codec_type') == 'video':
+            color_primaries = stream.get('color_primaries', '').lower()
+            transfer = stream.get('transfer_characteristics', '').lower()
+
+            is_wide_gamut = color_primaries == 'bt2020'
+            is_hdr_transfer = transfer in ('smpte2084', 'arib-std-b67')
+
+            return is_wide_gamut and is_hdr_transfer
+
+    return False
 
 
 def send_to_trash(file_path: Path) -> bool:
