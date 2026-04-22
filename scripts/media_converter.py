@@ -1158,7 +1158,7 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto') 
 
     Quality options:
     - auto: Adaptive CRF by resolution (recommended)
-    - lossless: H265 truly lossless, H264 uses CRF 18 (very large files)
+    - lossless: True lossless encoding (H264 and H265 both truly lossless)
     - high: CRF 18 (visually lossless, recommended)
     - medium: CRF 23 (good quality)
     """
@@ -2125,7 +2125,7 @@ Video codecs:
 
 Video quality:
     auto     - Adaptive by resolution (recommended)
-    lossless - H265 truly lossless, H264 uses CRF 18 (very large files)
+    lossless - True lossless encoding (H264 and H265 both truly lossless)
     high     - CRF 18, visually lossless (recommended)
     medium   - CRF 23, good quality, smaller files
 
@@ -2332,7 +2332,7 @@ Video resizing:
 
     quality_desc = {
         'auto': 'adaptive by resolution (recommended)',
-        'lossless': 'H265 truly lossless, H264 uses CRF 18 (very large files)',
+        'lossless': 'True lossless encoding (H264 and H265 both truly lossless)',
         'high': 'CRF 18 - visually lossless (recommended)',
         'medium': 'CRF 23 - good quality, smaller size'
     }
