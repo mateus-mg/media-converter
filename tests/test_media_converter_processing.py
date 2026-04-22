@@ -167,6 +167,39 @@ class TestMediaConverterProcessing(unittest.TestCase):
             self.assertIn('zscale', filter_str)
             self.assertIn('tonemap=hable', filter_str)
 
+    def test_h264_lossless_uses_lossless_1_not_crf_18(self):
+        """When quality=lossless with h264 codec, should use -lossless 1 not CRF 18"""
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = Path(tmp) / "clip.mov"
+            output_file = Path(tmp) / "clip.mp4"
+            input_file.write_bytes(b"x")
+
+            fake_info = {
+                "streams": [{
+                    "codec_type": "video",
+                    "codec_name": "hevc",
+                    "width": 1920,
+                    "height": 1080,
+                    "pix_fmt": "yuv420p",
+                }],
+                "format": {"duration": "5"},
+            }
+
+            with patch.object(mc, "get_video_info", return_value=fake_info), \
+                 patch.object(mc, "detect_full_hardware") as hw_mock, \
+                 patch.object(mc, "check_nvenc_available", return_value=False), \
+                 patch.object(mc, "log_message"), \
+                 patch("subprocess.run") as mock_run:
+                mock_run.return_value = unittest.mock.Mock(returncode=0, stdout="", stderr="")
+                success, _ = mc.convert_video(input_file, codec='h264', quality='lossless')
+
+            call_args = mock_run.call_args[0][0]
+            self.assertNotIn('-crf', call_args, "CRF should not be used for lossless")
+            self.assertNotIn('18', call_args, "CRF 18 should not be used for lossless")
+            self.assertIn('-lossless', call_args, "Should use -lossless 1 for true lossless")
+            lossless_idx = call_args.index('-lossless')
+            self.assertEqual(call_args[lossless_idx + 1], '1', "Lossless level should be 1")
+
 
 if __name__ == "__main__":
     unittest.main()
