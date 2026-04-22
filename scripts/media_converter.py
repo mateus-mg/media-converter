@@ -1032,6 +1032,7 @@ def _determine_auto_crf_and_preset(
     bitrate_mbps: float,
     is_16_9: bool,
     pixel_format: str,
+    is_hdr: bool = False,
 ) -> Tuple[str, str, List[str]]:
     """Return adaptive CRF and preset tuned for quality/size balance.
     
@@ -1099,6 +1100,12 @@ def _determine_auto_crf_and_preset(
     if output_height >= 2160 and preset_step > 0:
         preset_step = min(preset_step, 1)  # Limit slowdown for 4K
         reasons.append('4k_time_guard')
+
+    # HDR tone mapping is computationally expensive
+    # When HDR detected, use faster preset to compensate for zscale overhead
+    if is_hdr:
+        preset_step -= 1  # Move one step faster to compensate
+        reasons.append('hdr_tone_mapping_compensation')
 
     tuned_preset = _adjust_preset_step(hw_type, base_preset, preset_step)
     return str(crf), tuned_preset, reasons
@@ -1324,6 +1331,7 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto') 
             bitrate_mbps=source_bitrate_mbps,
             is_16_9=is_16_9,
             pixel_format=source_pixel_format,
+            is_hdr=is_hdr,
         )
         auto_factor_summary = _summarize_auto_factors(auto_reasons)
         log_message(
