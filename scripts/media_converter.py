@@ -1384,8 +1384,8 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto') 
                 '-profile:v', 'high'
             ]
         elif quality_mode == 'lossless':
-            log_message('INFO', f"  Using high quality encoder (CRF 18 - visually lossless)")
-            video_codec = ['-c:v', 'libx264', '-crf', '18', '-preset', 'medium', '-profile:v', 'high', '-level', '4.1']
+            log_message('INFO', f"  Using H.264 lossless encoder (-lossless 1)")
+            video_codec = ['-c:v', 'libx264', '-lossless', '1', '-preset', 'medium', '-profile:v', 'high', '-level', '4.1']
         else:
             log_message(
                 'INFO', f"  Using software encoder (preset: {optimal_preset})")
