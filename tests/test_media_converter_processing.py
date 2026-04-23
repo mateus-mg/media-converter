@@ -81,6 +81,236 @@ class TestMediaConverterProcessing(unittest.TestCase):
             self.assertEqual(counts["hevc"], 1)
             self.assertEqual(counts["heic"], 1)
 
+    def test_detect_hdr_returns_true_for_bt2020_smpte2084(self):
+        """HDR should be detected when color_primaries=bt2020 and transfer=smpte2084"""
+        fake_info = {
+            "streams": [{
+                "codec_type": "video",
+                "codec_name": "hevc",
+                "width": 3840,
+                "height": 2160,
+                "pix_fmt": "yuv420p10le",
+                "color_primaries": "bt2020",
+                "transfer_characteristics": "smpte2084",
+            }],
+            "format": {"duration": "10"},
+        }
+        result = mc._is_hdr_video(fake_info)
+        self.assertTrue(result)
+
+    def test_detect_hdr_returns_false_for_bt709(self):
+        """SDR should not be flagged as HDR"""
+        fake_info = {
+            "streams": [{
+                "codec_type": "video",
+                "codec_name": "hevc",
+                "width": 1920,
+                "height": 1080,
+                "pix_fmt": "yuv420p",
+                "color_primaries": "bt709",
+                "transfer_characteristics": "bt709",
+            }],
+            "format": {"duration": "10"},
+        }
+        result = mc._is_hdr_video(fake_info)
+        self.assertFalse(result)
+
+    def test_detect_hdr_returns_true_for_hlg(self):
+        """HLG is also HDR"""
+        fake_info = {
+            "streams": [{
+                "codec_type": "video",
+                "codec_name": "hevc",
+                "width": 3840,
+                "height": 2160,
+                "pix_fmt": "yuv420p10le",
+                "color_primaries": "bt2020",
+                "transfer_characteristics": "arib-std-b67",
+            }],
+            "format": {"duration": "10"},
+        }
+        result = mc._is_hdr_video(fake_info)
+        self.assertTrue(result)
+
+    def test_tone_mapping_filter_added_for_hdr_source(self):
+        """When source is HDR, tone mapping filter should be added to video_filters"""
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = Path(tmp) / "hdr_clip.mov"
+            output_file = Path(tmp) / "hdr_clip.mp4"
+            input_file.write_bytes(b"x")
+
+            fake_info = {
+                "streams": [{
+                    "codec_type": "video",
+                    "codec_name": "hevc",
+                    "width": 3840,
+                    "height": 2160,
+                    "pix_fmt": "yuv420p10le",
+                    "color_primaries": "bt2020",
+                    "transfer_characteristics": "smpte2084",
+                }],
+                "format": {"duration": "5"},
+            }
+
+            with patch.object(mc, "get_video_info", return_value=fake_info), \
+                 patch.object(mc, "detect_full_hardware") as hw_mock, \
+                 patch.object(mc, "check_nvenc_available", return_value=False), \
+                 patch.object(mc, "log_message"), \
+                 patch("subprocess.run") as mock_run:
+                mock_run.return_value = unittest.mock.Mock(returncode=0, stdout="", stderr="")
+                success, _ = mc.convert_video(input_file)
+
+            call_args = mock_run.call_args[0][0]
+            filter_idx = call_args.index('-vf') if '-vf' in call_args else None
+            self.assertIsNotNone(filter_idx, "No video filter added for HDR source")
+            filter_str = call_args[filter_idx + 1]
+            self.assertIn('zscale', filter_str)
+            self.assertIn('tonemap=hable', filter_str)
+
+    def test_h264_lossless_uses_lossless_1_not_crf_18(self):
+        """When quality=lossless with h264 codec, should use -lossless 1 not CRF 18"""
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = Path(tmp) / "clip.mov"
+            output_file = Path(tmp) / "clip.mp4"
+            input_file.write_bytes(b"x")
+
+            fake_info = {
+                "streams": [{
+                    "codec_type": "video",
+                    "codec_name": "hevc",
+                    "width": 1920,
+                    "height": 1080,
+                    "pix_fmt": "yuv420p",
+                }],
+                "format": {"duration": "5"},
+            }
+
+            with patch.object(mc, "get_video_info", return_value=fake_info), \
+                 patch.object(mc, "detect_full_hardware") as hw_mock, \
+                 patch.object(mc, "check_nvenc_available", return_value=False), \
+                 patch.object(mc, "log_message"), \
+                 patch("subprocess.run") as mock_run:
+                mock_run.return_value = unittest.mock.Mock(returncode=0, stdout="", stderr="")
+                success, _ = mc.convert_video(input_file, codec='h264', quality='lossless')
+
+            call_args = mock_run.call_args[0][0]
+            self.assertNotIn('-crf', call_args, "CRF should not be used for lossless")
+            self.assertNotIn('18', call_args, "CRF 18 should not be used for lossless")
+            self.assertIn('-lossless', call_args, "Should use -lossless 1 for true lossless")
+            lossless_idx = call_args.index('-lossless')
+            self.assertEqual(call_args[lossless_idx + 1], '1', "Lossless level should be 1")
+
+
+    def test_qsv_lossless_uses_lossless_option(self):
+        """When QSV encoder with lossless, should use lossless option not global_quality"""
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = Path(tmp) / "clip.mov"
+            output_file = Path(tmp) / "clip.mp4"
+            input_file.write_bytes(b"x")
+
+            fake_info = {
+                "streams": [{
+                    "codec_type": "video",
+                    "codec_name": "hevc",
+                    "width": 1920,
+                    "height": 1080,
+                    "pix_fmt": "yuv420p",
+                }],
+                "format": {"duration": "5"},
+            }
+
+            mock_hw = unittest.mock.Mock()
+            mock_hw.best_for_8bit = 'qsv'
+            mock_hw.gpu_nvidia = None
+
+            with patch.object(mc, "get_video_info", return_value=fake_info), \
+                 patch.object(mc, "detect_full_hardware", return_value=mock_hw), \
+                 patch.object(mc, "check_nvenc_available", return_value=False), \
+                 patch.object(mc, "log_message"), \
+                 patch("subprocess.run") as mock_run:
+                mock_run.return_value = unittest.mock.Mock(returncode=0, stdout="", stderr="")
+                success, _ = mc.convert_video(input_file, codec='h264', quality='lossless')
+
+            call_args = mock_run.call_args[0][0]
+            self.assertNotIn('-global_quality', call_args, "QSV lossless should not use global_quality")
+            self.assertIn('-lossless', call_args, "QSV lossless should use -lossless option")
+
+    def test_nvenc_lossless_uses_rc_lossless(self):
+        """When NVENC encoder with lossless, should use -rc lossless not -cq"""
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = Path(tmp) / "clip.mov"
+            output_file = Path(tmp) / "clip.mp4"
+            input_file.write_bytes(b"x")
+
+            fake_info = {
+                "streams": [{
+                    "codec_type": "video",
+                    "codec_name": "hevc",
+                    "width": 1920,
+                    "height": 1080,
+                    "pix_fmt": "yuv420p",
+                }],
+                "format": {"duration": "5"},
+            }
+
+            mock_hw = unittest.mock.Mock()
+            mock_hw.best_for_8bit = 'nvenc'
+            mock_hw.gpu_nvidia = unittest.mock.Mock(supports_10bit=False)
+
+            with patch.object(mc, "get_video_info", return_value=fake_info), \
+                 patch.object(mc, "detect_full_hardware", return_value=mock_hw), \
+                 patch.object(mc, "check_nvenc_available", return_value=True), \
+                 patch.object(mc, "log_message"), \
+                 patch("subprocess.run") as mock_run:
+                mock_run.return_value = unittest.mock.Mock(returncode=0, stdout="", stderr="")
+                success, _ = mc.convert_video(input_file, codec='h264', quality='lossless')
+
+            call_args = mock_run.call_args[0][0]
+            self.assertNotIn('-cq', call_args, "NVENC lossless should not use -cq")
+            self.assertIn('-rc', call_args, "NVENC should use -rc for lossless")
+            rc_idx = call_args.index('-rc')
+            self.assertEqual(call_args[rc_idx + 1], 'lossless', "NVENC RC should be lossless")
+
+    def test_hdr_preset_compensation_in_auto_crf(self):
+        """When HDR is detected and quality=auto, preset should compensate for tone mapping overhead"""
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = Path(tmp) / "hdr_clip.mov"
+            output_file = Path(tmp) / "hdr_clip.mp4"
+            input_file.write_bytes(b"x")
+
+            fake_info = {
+                "streams": [{
+                    "codec_type": "video",
+                    "codec_name": "hevc",
+                    "width": 3840,
+                    "height": 2160,
+                    "pix_fmt": "yuv420p10le",
+                    "color_primaries": "bt2020",
+                    "transfer_characteristics": "smpte2084",
+                }],
+                "format": {"duration": "5"},
+            }
+
+            with patch.object(mc, "get_video_info", return_value=fake_info), \
+                 patch.object(mc, "detect_full_hardware") as hw_mock, \
+                 patch.object(mc, "check_nvenc_available", return_value=False), \
+                 patch.object(mc, "log_message"), \
+                 patch("subprocess.run") as mock_run:
+                mock_run.return_value = unittest.mock.Mock(returncode=0, stdout="", stderr="")
+                # Call with quality='auto' to trigger _determine_auto_crf_and_preset
+                success, _ = mc.convert_video(input_file, codec='h264', quality='auto')
+
+            call_args = mock_run.call_args[0][0]
+            # HDR source should use faster preset to compensate for tone mapping overhead
+            preset_idx = call_args.index('-preset')
+            preset = call_args[preset_idx + 1]
+            # For 4K HDR with software encoder:
+            # - Base preset for 4K software is 'slow'
+            # - HDR compensation moves one step faster
+            # - Result should be 'medium' (faster than 'slow')
+            self.assertIn(preset, ['medium', 'fast'],
+                f"HDR 4K should use faster preset for tone mapping, got {preset}")
+
 
 if __name__ == "__main__":
     unittest.main()

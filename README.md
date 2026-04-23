@@ -193,8 +193,10 @@ The interactive menu provides:
 - ✅ Converts only MOV/MP4 videos with H.265/HEVC codec to H.264
 - ✅ Hardware acceleration: Auto-detects NVIDIA NVENC, Intel QSV, Software (dynamic detection)
 - ✅ 10-bit support: Uses High 10 Profile for 10-bit sources (software encoder)
+- ✅ HDR support: Auto-detects HDR (bt2020 + PQ/HLG) and converts to SDR with tone mapping
 - ✅ DOVI (Dolby Vision) support: Auto-detects and handles DOVI content (uses NVENC or software)
 - ✅ Bitrate-aware quality: Auto CRF based on source bitrate: <10Mbps→18-19, 10-25Mbps→20-21, 25-50Mbps→22-23, >50Mbps→23-24
+- ✅ True lossless: Lossless encoding for H264, H265, QSV, and NVENC encoders
 - ✅ Smart resizing: Never upscales, maintains aspect ratio
 - ✅ Faststart: Enables web streaming compatibility
 - ✅ Metadata preservation: Copies creation/modification dates
@@ -334,6 +336,7 @@ converter /path/media --image-format JPEG --video-codec h264 --resize 1080p
 **H.265/HEVC Videos:**
 - Dynamic hardware detection → NVIDIA NVENC > Intel QSV > Software
 - 10-bit sources force Software encoder (High 10 Profile)
+- HDR detected: Converts to SDR using zscale + tone mapping (hable algorithm)
 - DOVI (Dolby Vision) detected: uses NVENC if available, else software
 - Detect codec via ffprobe (not by extension)
 - Only MOV/MP4 with H.265/HEVC are converted
@@ -342,6 +345,7 @@ converter /path/media --image-format JPEG --video-codec h264 --resize 1080p
 - Videos without audio are processed correctly (no audio codec error)
 - Output file: If input is .mp4, output will be named with _converted suffix
 - H.264 output for maximum compatibility
+- True lossless support: `-lossless 1` for H264/QSV, `-rc lossless` for NVENC
 
 ### Quality Settings Explained
 
@@ -359,11 +363,12 @@ converter /path/media --image-format JPEG --video-codec h264 --resize 1080p
 
 ### Hardware Acceleration Priority
 
-- **NVIDIA NVENC**: Fast, `-cq` parameter (best performance, not all GPUs support 10-bit)
-- **Intel Quick Sync (QSV)**: Fast, `-global_quality` parameter
-- **Software (libx264)**: CPU-based, compatible everywhere (required for 10-bit sources)
+- **NVIDIA NVENC**: Fast, `-rc lossless` for lossless (best performance, not all GPUs support 10-bit)
+- **Intel Quick Sync (QSV)**: Fast, `-lossless 1` for lossless
+- **Software (libx264)**: CPU-based, `-lossless 1` for lossless, compatible everywhere (required for 10-bit sources)
 
 Note: 10-bit H264 sources force Software encoder (NVENC/QSV limitations)
+Note: HDR sources use software encoder for tone mapping processing
 
 ## Virtual Environment Management
 

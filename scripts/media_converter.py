@@ -29,7 +29,6 @@ import sys
 import subprocess
 import shutil
 from pathlib import Path
-from typing import Dict, List, Tuple
 import argparse
 import logging
 
@@ -162,6 +161,36 @@ def detect_full_hardware() -> HardwareInfo:
     
     _hw_info_cached = hw
     return hw
+
+
+def _is_hdr_video(video_info: Dict) -> bool:
+    """Detect if video has HDR (High Dynamic Range) metadata.
+
+    HDR is detected when:
+    - color_primaries is bt2020 (wide color gamut) AND
+    - transfer_characteristics is smpte2084 (PQ) or arib-std-b67 (HLG)
+
+    Args:
+        video_info: ffprobe JSON output with streams
+
+    Returns:
+        True if HDR detected, False otherwise
+    """
+    if not video_info or 'streams' not in video_info:
+        return False
+
+    for stream in video_info['streams']:
+        if stream.get('codec_type') == 'video':
+            color_primaries = stream.get('color_primaries', '').lower()
+            # Handle both transfer_characteristics and color_transfer (ffprobe uses both names)
+            transfer = stream.get('transfer_characteristics') or stream.get('color_transfer', '')
+
+            is_wide_gamut = color_primaries == 'bt2020'
+            is_hdr_transfer = transfer.lower() in ('smpte2084', 'arib-std-b67') if transfer else False
+
+            return is_wide_gamut and is_hdr_transfer
+
+    return False
 
 
 def send_to_trash(file_path: Path) -> bool:
@@ -1003,6 +1032,7 @@ def _determine_auto_crf_and_preset(
     bitrate_mbps: float,
     is_16_9: bool,
     pixel_format: str,
+    is_hdr: bool = False,
 ) -> Tuple[str, str, List[str]]:
     """Return adaptive CRF and preset tuned for quality/size balance.
     
@@ -1071,6 +1101,12 @@ def _determine_auto_crf_and_preset(
         preset_step = min(preset_step, 1)  # Limit slowdown for 4K
         reasons.append('4k_time_guard')
 
+    # HDR tone mapping is computationally expensive
+    # When HDR detected, use faster preset to compensate for zscale overhead
+    if is_hdr:
+        preset_step -= 1  # Move one step faster to compensate
+        reasons.append('hdr_tone_mapping_compensation')
+
     tuned_preset = _adjust_preset_step(hw_type, base_preset, preset_step)
     return str(crf), tuned_preset, reasons
 
@@ -1130,7 +1166,7 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto') 
 
     Quality options:
     - auto: Adaptive CRF by resolution (recommended)
-    - lossless: H265 truly lossless, H264 uses CRF 18 (very large files)
+    - lossless: True lossless encoding (H264 and H265 both truly lossless)
     - high: CRF 18 (visually lossless, recommended)
     - medium: CRF 23 (good quality)
     """
@@ -1228,7 +1264,12 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto') 
     
     # Check if source is 10-bit
     is_10bit = '10le' in source_pixel_format or 'p010' in source_pixel_format
-    
+
+    # Detect HDR (High Dynamic Range) for tone mapping
+    is_hdr = _is_hdr_video(video_info)
+    if is_hdr:
+        log_message('INFO', f"  HDR detected - will apply tone mapping for SDR output")
+
     # Select appropriate encoder based on bit depth
     if is_10bit:
         hw_accel = hw_info.best_for_10bit
@@ -1290,6 +1331,7 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto') 
             bitrate_mbps=source_bitrate_mbps,
             is_16_9=is_16_9,
             pixel_format=source_pixel_format,
+            is_hdr=is_hdr,
         )
         auto_factor_summary = _summarize_auto_factors(auto_reasons)
         log_message(
@@ -1324,17 +1366,28 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto') 
                 '-level', '4.1'
             ]
         elif hw_accel == 'qsv':
-            log_message(
-                'INFO', f"  Using Intel Quick Sync Video (hardware acceleration, preset: {optimal_preset})")
-            if is_10bit:
+            if quality_mode == 'lossless':
+                log_message(
+                    'INFO', f"  Using Intel Quick Sync Video (lossless, preset: {optimal_preset})")
+                video_codec = [
+                    '-c:v', 'h264_qsv',
+                    '-lossless', '1',
+                    '-preset', optimal_preset,
+                    '-profile:v', 'high'
+                ]
+            elif is_10bit:
+                log_message(
+                    'INFO', f"  Using Intel Quick Sync Video (hardware acceleration, preset: {optimal_preset})")
                 video_codec = [
                     '-c:v', 'h264_qsv',
                     '-global_quality', selected_crf,
                     '-preset', optimal_preset,
-                    '-profile:v', 'high',  # QSV uses different profile naming
+                    '-profile:v', 'high',
                     '-pix_fmt', 'p010le' if 'p010' in source_pixel_format else 'yuv420p10le'
                 ]
             else:
+                log_message(
+                    'INFO', f"  Using Intel Quick Sync Video (hardware acceleration, preset: {optimal_preset})")
                 video_codec = [
                     '-c:v', 'h264_qsv',
                     '-global_quality', selected_crf,
@@ -1342,17 +1395,27 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto') 
                     '-profile:v', 'high'
                 ]
         elif hw_accel == 'nvenc':
-            log_message(
-                'INFO', f"  Using NVIDIA NVENC (hardware acceleration, preset: {optimal_preset})")
-            video_codec = [
-                '-c:v', 'h264_nvenc',
-                '-cq', selected_crf,
-                '-preset', optimal_preset,
-                '-profile:v', 'high'
-            ]
+            if quality_mode == 'lossless':
+                log_message(
+                    'INFO', f"  Using NVIDIA NVENC (lossless, preset: {optimal_preset})")
+                video_codec = [
+                    '-c:v', 'h264_nvenc',
+                    '-rc', 'lossless',
+                    '-preset', optimal_preset,
+                    '-profile:v', 'high'
+                ]
+            else:
+                log_message(
+                    'INFO', f"  Using NVIDIA NVENC (hardware acceleration, preset: {optimal_preset})")
+                video_codec = [
+                    '-c:v', 'h264_nvenc',
+                    '-cq', selected_crf,
+                    '-preset', optimal_preset,
+                    '-profile:v', 'high'
+                ]
         elif quality_mode == 'lossless':
-            log_message('INFO', f"  Using high quality encoder (CRF 18 - visually lossless)")
-            video_codec = ['-c:v', 'libx264', '-crf', '18', '-preset', 'medium', '-profile:v', 'high', '-level', '4.1']
+            log_message('INFO', f"  Using H.264 lossless encoder (-lossless 1)")
+            video_codec = ['-c:v', 'libx264', '-lossless', '1', '-preset', 'medium', '-profile:v', 'high', '-level', '4.1']
         else:
             log_message(
                 'INFO', f"  Using software encoder (preset: {optimal_preset})")
@@ -1384,8 +1447,14 @@ def convert_video(input_path: Path, codec: str = 'h264', quality: str = 'auto') 
     audio_codec = ['-c:a', 'aac', '-b:a', '256k', '-ar', '48000'] if has_audio_stream else []
 
 
-    # Build video filters (empty - no transpose, no scale)
+    # Build video filters
     video_filters = []
+
+    # Apply tone mapping for HDR→SDR conversion
+    if is_hdr:
+        tone_mapping_filter = 'zscale=t=linear:npl=100,format=pix_fmts=yuv420p,tonemap=hable:desat=0'
+        video_filters = ['-vf', tone_mapping_filter]
+        log_message('INFO', f"  Applying HDR→SDR tone mapping (bt2020→bt709)")
 
     # Build FFmpeg command
     cmd = [
@@ -2065,7 +2134,7 @@ Video codecs:
 
 Video quality:
     auto     - Adaptive by resolution (recommended)
-    lossless - H265 truly lossless, H264 uses CRF 18 (very large files)
+    lossless - True lossless encoding (H264 and H265 both truly lossless)
     high     - CRF 18, visually lossless (recommended)
     medium   - CRF 23, good quality, smaller files
 
@@ -2272,7 +2341,7 @@ Video resizing:
 
     quality_desc = {
         'auto': 'adaptive by resolution (recommended)',
-        'lossless': 'H265 truly lossless, H264 uses CRF 18 (very large files)',
+        'lossless': 'True lossless encoding (H264 and H265 both truly lossless)',
         'high': 'CRF 18 - visually lossless (recommended)',
         'medium': 'CRF 23 - good quality, smaller size'
     }
