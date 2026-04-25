@@ -1,10 +1,10 @@
 site_name: Media Converter Documentation
 site_description: Universal HEIC & HEVC Converter - converts images and videos with hardware acceleration
 site_author: mateus
-site_url: https://mateus.github.io/media-converter
+site_url: https://mateus-mg.github.io/media-converter
 
-repo_name: mateus/media-converter
-repo_url: https://github.com/mateus/media-converter
+repo_name: mateus-mg/media-converter
+repo_url: https://github.com/mateus-mg/media-converter
 
 theme:
   name: material
@@ -55,7 +55,7 @@ markdown_extensions:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/mateus
+      link: https://github.com/mateus-mg
   generator: false
 
 exclude_docs: |
