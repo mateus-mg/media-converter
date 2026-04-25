@@ -24,7 +24,7 @@ brew install ffmpeg imagemagick
 ## Python Environment
 
 ```bash
-git clone https://github.com/mateus/media-converter.git
+git clone https://github.com/mateus-mg/media-converter.git
 cd media-converter
 python3 -m venv venv
 source venv/bin/activate
